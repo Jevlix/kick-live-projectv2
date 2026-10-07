@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RRaenee Dashboard</title>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/css/style.css">
+</head>
+<body>
+    <div id="app" class="flex h-screen overflow-hidden">
+        <div v-html="sidebar"></div>
+
+        <main class="flex-1 flex flex-col overflow-hidden relative">
+            <header class="p-6 border-b border-white/5 flex flex-col gap-4 bg-[#05070a]">
+                <div class="flex justify-between items-center gap-4 flex-wrap">
+                    <h2 class="text-xl font-black text-pink-500 uppercase italic">CHAT ÖZETİ</h2>
+
+                    <div class="flex items-center gap-3 text-xs font-black uppercase tracking-wider">
+                        <button @click="manualRefresh" class="px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition text-[10px] tracking-widest">
+                            <i class="fa fa-rotate-right mr-1"></i> Yenile
+                        </button>
+                        <span class="w-2.5 h-2.5 rounded-full" :class="isConnected ? 'bg-green-400' : 'bg-red-500'"></span>
+                        <span :class="isConnected ? 'text-green-400' : 'text-red-400'">
+                            {{ isConnected ? 'Canlı Chat Bağlı' : 'Canlı Chat Kopuk' }}
+                        </span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                    <div>
+                        <label class="block text-[10px] uppercase font-black opacity-50 mb-2">Veri Modu</label>
+                        <select v-model="filterMode" @change="handleModeChange" class="w-full bg-[#0b0f14] text-white border border-white/10 rounded-2xl px-4 py-3 text-sm font-black outline-none appearance-none">
+                            <option value="live">Canlı Yayın</option>
+                            <option value="stream">Önceki Yayınlar</option>
+                        </select>
+                    </div>
+
+                    <div v-if="filterMode === 'stream'">
+                        <label class="block text-[10px] uppercase font-black opacity-50 mb-2">Yayın</label>
+                        <select v-model="selectedStreamId" @change="fetchDashboardData" class="w-full bg-[#0b0f14] text-white border border-white/10 rounded-2xl px-4 py-3 text-sm font-black outline-none appearance-none">
+                            <option value="">Önceki yayın seç</option>
+                            <option v-for="s in streamOptions" :key="s.id" :value="String(s.id)">
+                                {{ formatStreamLabel(s) }}
+                            </option>
+                        </select>
+                    </div>
+
+                    <div v-if="false">
+                        <label class="block text-[10px] uppercase font-black opacity-50 mb-2">
+                            {{ filterMode === 'offstream_day' ? 'Offstream Günü' : 'Gün' }}
+                        </label>
+                        <input
+                            v-model="selectedDate"
+                            @change="fetchDashboardData"
+                            type="date"
+                            class="w-full bg-[#0b0f14] text-white border border-white/10 rounded-2xl px-4 py-3 text-sm font-black outline-none appearance-none"
+                        >
+                    </div>
+
+                    <div v-if="false">
+                        <label class="block text-[10px] uppercase font-black opacity-50 mb-2">Ay</label>
+                        <input
+                            v-model="selectedMonth"
+                            @change="fetchDashboardData"
+                            type="month"
+                            class="w-full bg-[#0b0f14] text-white border border-white/10 rounded-2xl px-4 py-3 text-sm font-black outline-none appearance-none"
+                        >
+                    </div>
+
+                    <div class="xl:col-span-2">
+                        <label class="block text-[10px] uppercase font-black opacity-50 mb-2">Aktif Veri</label>
+                        <div class="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm font-black min-h-[50px] flex items-center">
+                            {{ currentLabel }}
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <section class="page-section flex-1 p-8 scroll-flat space-y-10 overflow-y-auto">
+                <div
+                    v-if="apiMeta?.warning"
+                    class="bg-red-500/10 border border-red-500/20 rounded-2xl px-4 py-3 text-red-300 font-black text-sm"
+                >
+                    {{ apiMeta.warning }}
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+                    <div v-for="stat in mainStats" :key="stat.label" class="stat-card">
+                        <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">{{ stat.label }}</p>
+                        <h3 class="text-4xl font-black text-white italic">{{ stat.val }}</h3>
+                    </div>
+                </div>
+
+                <div>
+                    <h4 class="mb-6 font-black text-xl flex items-center gap-2 italic">
+                        <div class="w-1 h-6 bg-pink-600"></div>
+                        TOP 15 CHAT KULLANICISI
+                    </h4>
+
+                    <div class="flex gap-4 overflow-x-auto pb-4 scroll-flat">
+                        <div
+                            v-for="u in users.slice(0, 15)"
+                            :key="u.n"
+                            @click="openUserByName(u.n)"
+                            class="min-w-[240px] glass p-6 rounded-3xl flex-shrink-0 group hover:scale-105 transition cursor-pointer border border-white/10 relative overflow-hidden"
+                        >
+                            <span class="absolute -right-4 -top-4 text-7xl font-black opacity-5 group-hover:opacity-10">#{{ u.rank }}</span>
+                            <p class="font-black text-2xl mb-4 uppercase italic break-all">{{ u.n }}</p>
+
+                            <div class="flex justify-between items-end">
+                                <p class="text-4xl font-black text-pink-500">{{ u.mc || 0 }}</p>
+                                <p class="text-[10px] opacity-40 uppercase font-black">Mesaj</p>
+                            </div>
+
+                            <div class="mt-4 grid grid-cols-3 gap-2 text-center text-[10px] font-black uppercase tracking-tighter">
+                                <div class="bg-white/5 p-2 rounded-xl border border-white/5">
+                                    <p class="text-pink-400 text-lg">{{ u.mc || 0 }}</p>Mesaj
+                                </div>
+                                <div class="bg-white/5 p-2 rounded-xl border border-white/5">
+                                    <p class="text-blue-400 text-lg">{{ u.wc || 0 }}</p>Kelime
+                                </div>
+                                <div class="bg-white/5 p-2 rounded-xl border border-white/5">
+                                    <p class="text-green-400 text-lg">{{ u.ec || 0 }}</p>Emoji
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h4 class="mb-6 font-black text-xl flex items-center gap-2 italic">
+                        <div class="w-1 h-6 bg-cyan-400"></div>
+                        MODERASYON ÖZETİ
+                    </h4>
+
+                    <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-4">
+                        <div class="stat-card">
+                            <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Toplam İşlem</p>
+                            <h3 class="text-3xl font-black text-cyan-400">{{ moderationSummary.total_actions || 0 }}</h3>
+                        </div>
+                        <div class="stat-card">
+                            <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Timeout</p>
+                            <h3 class="text-3xl font-black text-yellow-400">{{ moderationSummary.timeouts || 0 }}</h3>
+                        </div>
+                        <div class="stat-card">
+                            <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Ban</p>
+                            <h3 class="text-3xl font-black text-red-400">{{ moderationSummary.bans || 0 }}</h3>
+                        </div>
+                        <div class="stat-card">
+                            <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Unban</p>
+                            <h3 class="text-3xl font-black text-green-400">{{ moderationSummary.unbans || 0 }}</h3>
+                        </div>
+                        <div class="stat-card">
+                            <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Mesaj Silme</p>
+                            <h3 class="text-3xl font-black text-pink-400">{{ moderationSummary.deleted_messages || 0 }}</h3>
+                        </div>
+                        <div class="stat-card">
+                            <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Subscription</p>
+                            <h3 class="text-3xl font-black text-purple-400">{{ stats.subscriptions || 0 }}</h3>
+                        </div>
+                        <div class="stat-card">
+                            <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Gift Sub</p>
+                            <h3 class="text-3xl font-black text-emerald-400">{{ stats.gift_subscriptions || 0 }}</h3>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                    <div class="stat-card xl:col-span-2">
+                        <div class="flex items-center justify-between mb-6">
+                            <h4 class="font-black text-xl italic flex items-center gap-2">
+                                <div class="w-1 h-6 bg-green-400"></div>
+                                CANLI CHAT
+                            </h4>
+                            <span class="text-[10px] uppercase font-black" :class="isConnected ? 'text-green-400' : 'text-red-400'">
+                                {{ isConnected ? 'CANLI' : 'BEKLENİYOR' }}
+                            </span>
+                        </div>
+
+                        <div class="space-y-3 max-h-[640px] overflow-y-auto scroll-flat pr-2">
+                            <div
+                                v-for="(msg, idx) in liveMessages"
+                                :key="'live-' + idx"
+                                class="p-4 rounded-[22px] bg-white/5 border border-white/5"
+                            >
+                                <div class="flex items-center justify-between mb-2 gap-3">
+                                    <button
+                                        @click="openUserByName(msg.u)"
+                                        class="text-green-400 font-black text-sm hover:text-green-300 transition text-left break-all"
+                                    >
+                                        {{ msg.u || 'Bilinmeyen Kullanıcı' }}
+                                    </button>
+
+                                    <span class="opacity-30 text-[10px] font-mono whitespace-nowrap">{{ formatChatTime(msg.t) }}</span>
+                                </div>
+
+                                <p class="text-sm leading-relaxed break-words" v-html="parseMessage(msg.m || '')"></p>
+                            </div>
+
+                            <div v-if="liveMessages.length === 0" class="opacity-50 text-sm">
+                                Henüz canlı mesaj gelmedi.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="stat-card xl:col-span-1">
+                        <div class="flex items-center justify-between mb-6">
+                            <h4 class="font-black text-xl italic flex items-center gap-2">
+                                <div class="w-1 h-6 bg-blue-400"></div>
+                                HIZLI ÖZET
+                            </h4>
+                        </div>
+
+                        <div class="space-y-3">
+                            <div class="table-row p-4">
+                                <p class="text-xs uppercase opacity-50 font-black mb-2">En aktif kullanıcı</p>
+                                <p class="text-pink-400 font-black text-lg break-all">{{ users[0]?.n || '-' }}</p>
+                            </div>
+
+                            <div class="table-row p-4">
+                                <p class="text-xs uppercase opacity-50 font-black mb-2">En çok mesaj</p>
+                                <p class="text-pink-400 font-black text-lg">{{ users[0]?.mc || 0 }}</p>
+                            </div>
+
+                            <div class="table-row p-4">
+                                <p class="text-xs uppercase opacity-50 font-black mb-2">En sık kelime</p>
+                                <p class="text-blue-400 font-black text-lg break-all">{{ words[0]?.w || '-' }}</p>
+                                <p class="text-xs opacity-50 mt-2">Kullanım: {{ words[0]?.c || 0 }}</p>
+                            </div>
+
+                            <div class="table-row p-4">
+                                <p class="text-xs uppercase opacity-50 font-black mb-2">En sık emoji</p>
+                                <p class="text-yellow-400 font-black text-lg break-all">{{ emotes[0]?.n || '-' }}</p>
+                                <p class="text-xs opacity-50 mt-2">Kullanım: {{ emotes[0]?.c || 0 }}</p>
+                            </div>
+
+                            <div class="table-row p-4">
+                                <p class="text-xs uppercase opacity-50 font-black mb-2">Spam kaydı</p>
+                                <p class="text-red-400 font-black text-lg">{{ spam.length || 0 }}</p>
+                            </div>
+
+                            <div class="table-row p-4">
+                                <p class="text-xs uppercase opacity-50 font-black mb-2">En aktif mod</p>
+                                <p class="text-cyan-400 font-black text-lg break-all">{{ topActiveMod?.n || '-' }}</p>
+                                <p class="text-xs opacity-50 mt-2">İşlem: {{ topActiveMod?.total_actions || 0 }}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                    <div class="stat-card">
+                        <div class="flex items-center justify-between mb-6">
+                            <h4 class="font-black text-xl italic flex items-center gap-2">
+                                <div class="w-1 h-6 bg-cyan-400"></div>
+                                EN AKTİF MODLAR
+                            </h4>
+                            <a href="/moderation.html" class="text-xs uppercase font-black text-cyan-400 hover:text-cyan-300">
+                                Panele Git
+                            </a>
+                        </div>
+
+                        <div class="space-y-3">
+                            <div
+                                v-for="mod in topMods"
+                                :key="mod.n"
+                                class="table-row p-4"
+                            >
+                                <div class="flex justify-between items-start gap-4 mb-3">
+                                    <span class="font-black text-cyan-300 break-all">{{ mod.n }}</span>
+                                    <span class="text-cyan-400 font-black">{{ mod.total_actions || 0 }}</span>
+                                </div>
+
+                                <div class="grid grid-cols-4 gap-2 text-center text-[10px] font-black uppercase tracking-tighter">
+                                    <div class="bg-white/5 p-2 rounded-xl border border-white/5">
+                                        <p class="text-yellow-400 text-base">{{ mod.timeouts || 0 }}</p>Timeout
+                                    </div>
+                                    <div class="bg-white/5 p-2 rounded-xl border border-white/5">
+                                        <p class="text-red-400 text-base">{{ mod.bans || 0 }}</p>Ban
+                                    </div>
+                                    <div class="bg-white/5 p-2 rounded-xl border border-white/5">
+                                        <p class="text-green-400 text-base">{{ mod.unbans || 0 }}</p>Unban
+                                    </div>
+                                    <div class="bg-white/5 p-2 rounded-xl border border-white/5">
+                                        <p class="text-pink-400 text-base">{{ mod.deleted_messages || 0 }}</p>Silme
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div v-if="topMods.length === 0" class="opacity-50 text-sm">
+                                Mod verisi bulunamadı.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="flex items-center justify-between mb-6">
+                            <h4 class="font-black text-xl italic flex items-center gap-2">
+                                <div class="w-1 h-6 bg-cyan-400"></div>
+                                SON MOD İŞLEMLERİ
+                            </h4>
+                        </div>
+
+                        <div class="space-y-3 max-h-[420px] overflow-y-auto scroll-flat pr-2">
+                            <div
+                                v-for="(action, idx) in recentModActions"
+                                :key="'mod-' + idx"
+                                class="p-4 rounded-[20px] bg-white/5 border border-white/5"
+                            >
+                                <div class="flex justify-between items-center gap-3 mb-2">
+                                    <span class="font-black" :class="getActionColor(action.action)">
+                                        {{ (action.action || '-').toUpperCase() }}
+                                    </span>
+                                    <span class="opacity-30 text-[10px] font-mono">{{ formatChatTime(action.t) }}</span>
+                                </div>
+
+                                <p class="text-sm break-words">
+                                    <span class="text-cyan-400 font-black">{{ action.mod || 'Unknown Mod' }}</span>
+                                    →
+                                    <span class="font-black">{{ action.target || 'Bilinmiyor' }}</span>
+                                </p>
+
+                                <p v-if="action.reason" class="text-xs opacity-60 mt-2">Sebep: {{ action.reason }}</p>
+                                <p v-if="action.duration" class="text-xs opacity-60 mt-1">Süre: {{ action.duration }}</p>
+                                <div v-if="action.msg" class="text-xs opacity-70 mt-2 break-words" v-html="parseMessage(action.msg)"></div>
+                            </div>
+
+                            <div v-if="recentModActions.length === 0" class="opacity-50 text-sm">
+                                Moderasyon aksiyonu bulunamadı.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <transition name="modal">
+            <div v-if="selectedUser" class="fixed inset-0 flex justify-end z-[1000]">
+                <div @click="selectedUser = null" class="absolute inset-0 bg-black/80 backdrop-blur-md"></div>
+
+                <div class="w-full max-w-2xl glass h-full min-h-0 shadow-2xl flex flex-col z-10 border-l border-white/10 text-white">
+                    <div class="p-10 border-b border-white/5 shrink-0 max-h-[52vh] overflow-y-auto scroll-flat">
+                        <div class="flex justify-between items-start gap-4">
+                            <div class="flex-1 min-w-0">
+                                <span class="text-pink-500 font-black text-xs uppercase italic">İzleyici Detayı</span>
+                                <h2 class="text-4xl md:text-6xl font-black mt-2 italic uppercase tracking-tighter break-all">{{ selectedUser.n }}</h2>
+                            </div>
+
+                            <button @click="selectedUser = null" class="text-5xl hover:text-red-500 transition leading-none ml-4">&times;</button>
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-4 mt-8 text-center text-[10px] font-black uppercase tracking-tighter">
+                            <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
+                                <p class="text-pink-400 text-2xl">{{ selectedUser.mc || 0 }}</p>Mesaj
+                            </div>
+                            <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
+                                <p class="text-blue-400 text-2xl">{{ selectedUser.wc || 0 }}</p>Kelime
+                            </div>
+                            <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
+                                <p class="text-green-400 text-2xl">{{ selectedUser.ec || 0 }}</p>Emoji
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
+                            <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
+                                <p class="text-[10px] font-black text-pink-500 uppercase mb-3">En Çok Kullandığı Kelimeler</p>
+                                <div v-for="(w, i) in (selectedUser.tw || [])" :key="i" class="flex justify-between text-xs py-1.5 opacity-80 border-b border-white/5 last:border-0 italic">
+                                    <span>"{{ Array.isArray(w) ? w[0] : (w.w || '-') }}"</span><b>{{ Array.isArray(w) ? w[1] : (w.c || 0) }}</b>
+                                </div>
+                                <div v-if="!(selectedUser.tw || []).length" class="text-xs opacity-40">Veri yok</div>
+                            </div>
+
+                            <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
+                                <p class="text-[10px] font-black text-green-500 uppercase mb-3">Favori Emojileri</p>
+                                <div v-for="(e, i) in (selectedUser.te || [])" :key="i" class="flex justify-between items-center text-xs py-1 opacity-80 border-b border-white/5 last:border-0">
+                                    <span class="flex items-center gap-2 min-w-0">
+                                        <img v-if="e.id" :src="'https://files.kick.com/emotes/' + e.id + '/fullsize'" class="h-6 w-6">
+                                        <span class="truncate">{{ e.n }}</span>
+                                    </span>
+                                    <b>{{ e.c }}</b>
+                                </div>
+                                <div v-if="!(selectedUser.te || []).length" class="text-xs opacity-40">Veri yok</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div ref="userMessageScroller" @scroll.passive="onUserMessagesScroll" class="flex-1 min-h-0 overflow-y-auto p-10 bg-black/30 space-y-4 scroll-flat">
+                        <p class="text-[10px] font-black opacity-30 uppercase italic">Son Mesajları</p>
+
+                        <div
+                            v-for="(log, i) in (selectedUser.logs || [])"
+                            :key="i"
+                            class="p-5 rounded-[24px] bg-white/5 border-l-4 border-pink-500 text-sm"
+                        >
+                            <span class="opacity-30 text-[10px] block mb-2 font-mono">{{ formatChatTime(log.t) }}</span>
+                            <p v-html="parseMessage(log.m)"></p>
+                        </div>
+
+                        <div v-if="userMessagesLoading" class="text-center text-xs opacity-50 py-4">Eski mesajlar yükleniyor…</div>
+                        <div v-if="!(selectedUser.logs || []).length && !selectedUser.loadingDetail" class="opacity-40 text-sm">Son mesaj kaydı bulunamadı.</div>
+                        <div v-if="!(selectedUser.logs || []).length && selectedUser.loadingDetail" class="text-center text-xs opacity-50 py-4">Veriler yükleniyor…</div>
+                        <div v-if="selectedUser.logs?.length && !userMessagesHasMore && !userMessagesLoading" class="text-center text-[10px] opacity-25 py-4 uppercase tracking-widest">Bu kullanıcı için kayıtların başlangıcına ulaşıldı</div>
+                    </div>
+                </div>
+            </div>
+        </transition>
+    </div>
+
+    <script src="/assets/js/common.js"></script>
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                const now = new Date();
+                const yyyy = now.getFullYear();
+                const mm = String(now.getMonth() + 1).padStart(2, '0');
+                const dd = String(now.getDate()).padStart(2, '0');
+
+                return {
+                    stats: {},
+                    users: [],
+                    words: [],
+                    emotes: [],
+                    spam: [],
+                    moderation: {
+                        summary: {},
+                        mods: [],
+                        recent_actions: []
+                    },
+                    selectedUser: null,
+                    liveMessages: [],
+                    isConnected: false,
+                    socketRef: null,
+
+                    filterMode: 'live',
+                    selectedStreamId: '',
+                    selectedDate: `${yyyy}-${mm}-${dd}`,
+                    selectedMonth: `${yyyy}-${mm}`,
+                    streamOptions: [],
+                    apiMeta: {},
+                    selectedStream: null,
+                    loading: false,
+                    autoRefreshTimer: null,
+                    lastStatsUpdateAt: null,
+                    userMessagesLoading: false,
+                    userMessagesNextCursor: null,
+                    userMessagesHasMore: false,
+                    userDetailRequestToken: 0
+                };
+            },
+
+            computed: {
+                sidebar() {
+                    return sidebarHtml('index');
+                },
+
+                currentLabel() {
+                    return getReadableFilterLabel(
+                        {
+                            mode: this.filterMode,
+                            stream_id: this.selectedStreamId,
+                            date: this.selectedDate,
+                            month: this.selectedMonth
+                        },
+                        this.apiMeta,
+                        this.selectedStream
+                    );
+                },
+
+                mainStats() {
+                    return [
+                        { label: 'Farklı Chat Kullanıcısı', val: this.stats?.total_users || 0 },
+                        { label: 'Toplam Mesaj', val: this.stats?.total_msgs || 0 },
+                        { label: 'Analiz Edilen Kelime', val: this.words.length || 0 },
+                        { label: 'Emoji Çeşidi', val: this.emotes.length || 0 }
+                    ];
+                },
+
+                moderationSummary() {
+                    return this.moderation?.summary || {};
+                },
+
+                filteredModsForSummary() {
+                    return (this.moderation?.mods || []).filter(m => {
+                        const n = String(m.n || '').toLowerCase();
+                        return n !== 'system/bot' && n !== 'botrix';
+                    });
+                },
+
+                topMods() {
+                    return this.filteredModsForSummary.slice(0, 5);
+                },
+
+                topActiveMod() {
+                    return this.filteredModsForSummary[0] || null;
+                },
+
+                recentModActions() {
+                    return (this.moderation?.recent_actions || []).slice().reverse().slice(0, 15);
+                }
+            },
+
+            methods: {
+                parseMessage,
+                getActionColor,
+                formatChatTime,
+
+                formatStreamLabel(stream) {
+                    if (!stream) return '-';
+                    if (stream.display_label) return stream.display_label;
+
+                    const date = stream?.label_date ? formatHumanDate(stream.label_date) : '-';
+                    const started = stream?.started_at
+                        ? new Date(stream.started_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+                        : '--:--';
+
+                    const suffix = stream?.session_type === 'offstream' ? 'offstream' : 'yayını';
+                    return `${date} ${suffix} · ${started}`;
+                },
+
+                async openUserByName(name) {
+                    const found = this.users.find(u => (u.n || '').toLowerCase() === String(name || '').toLowerCase());
+                    if (!found) return;
+                    this.selectedUser = { ...found, tw: [], te: [], logs: [], loadingDetail: true };
+                    this.userMessagesNextCursor = null;
+                    this.userMessagesHasMore = false;
+                    const token=++this.userDetailRequestToken;
+                    try {
+                        const sid = this.filterMode === 'stream' ? this.selectedStreamId : '';
+                        const q = `username=${encodeURIComponent(found.n)}${sid ? `&stream_id=${encodeURIComponent(sid)}` : ''}`;
+                        const r = await fetch(`/api/user_detail?${q}`);
+                        const d = await r.json();
+                        if (!d.ok || token !== this.userDetailRequestToken) return;
+                        this.selectedUser = { ...found, tw: (d.words || []).map(x => ({w:x.word,c:x.count})), te: (d.emotes || []).map(x => ({id:x.id,n:x.n,c:x.c})), logs: (d.messages || []).map(x => ({id:x.id,t:x.timestamp,m:x.message})), mod_received: d.mod_received || found.mod_received || {}, mod_history_received: d.mod_history_received || [], loadingDetail:false };
+                        this.userMessagesNextCursor=d.next_cursor ?? null;
+                        this.userMessagesHasMore=!!d.next_cursor;
+                        await this.$nextTick();
+                        const el=this.$refs.userMessageScroller;
+                        if (el) el.scrollTop=el.scrollHeight;
+                    } catch(e) { console.error('Kullanıcı detayı alınamadı',e); if (this.selectedUser) this.selectedUser={...this.selectedUser,loadingDetail:false}; }
+                },
+
+                async loadMoreUserMessages() {
+                    if (!this.selectedUser || this.userMessagesLoading || !this.userMessagesHasMore || this.userMessagesNextCursor == null) return;
+                    const el=this.$refs.userMessageScroller;
+                    const prevHeight=el?.scrollHeight || 0; const prevTop=el?.scrollTop || 0;
+                    this.userMessagesLoading=true;
+                    try {
+                        const params=new URLSearchParams({username:this.selectedUser.n,before_id:String(this.userMessagesNextCursor),limit:'100'});
+                        if (this.filterMode==='stream' && this.selectedStreamId) params.set('stream_id',this.selectedStreamId);
+                        const r=await fetch(`/api/user_messages?${params.toString()}`); const d=await r.json();
+                        if (!d.ok) return;
+                        const older=(d.messages||[]).map(x=>({id:x.id,t:x.timestamp,m:x.message}));
+                        const existing=new Set((this.selectedUser.logs||[]).map(x=>String(x.id)));
+                        const fresh=older.filter(x=>!existing.has(String(x.id)));
+                        this.selectedUser={...this.selectedUser,logs:[...fresh,...(this.selectedUser.logs||[])]};
+                        this.userMessagesNextCursor=d.next_cursor ?? null;
+                        this.userMessagesHasMore=!!d.next_cursor && older.length>0;
+                        await this.$nextTick();
+                        const nextEl=this.$refs.userMessageScroller;
+                        if(nextEl) nextEl.scrollTop=prevTop+(nextEl.scrollHeight-prevHeight);
+                    } catch(e){console.error('Eski mesajlar alınamadı',e);} finally{this.userMessagesLoading=false;}
+                },
+
+                onUserMessagesScroll(event){ if(event?.target && event.target.scrollTop<180) this.loadMoreUserMessages(); },
+
+                async fetchStreams() {
+                    try {
+                        this.streamOptions = await fetchStreams(120);
+                    } catch (e) {
+                        console.error('stream listesi alınamadı:', e);
+                        this.streamOptions = [];
+                    }
+                },
+
+                buildApiUrl() {
+                    if (this.filterMode === 'live') return '/api/data?mode=live';
+                    if (this.filterMode === 'stream' && this.selectedStreamId) {
+                        return `/api/data?mode=stream&stream_id=${encodeURIComponent(this.selectedStreamId)}`;
+                    }
+                    return '/api/data?mode=live';
+                },
+
+                syncFilterState() {
+                    setFilterState({
+                        mode: this.filterMode,
+                        stream_id: this.selectedStreamId,
+                        date: this.selectedDate,
+                        month: this.selectedMonth
+                    });
+                },
+
+                async refreshLiveStats() {
+                    if (this.filterMode !== 'live') return;
+                    try {
+                        const res = await fetch('/api/live/stats');
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        if (!data.ok) return;
+                        this.stats = { ...this.stats, ...(data.stats || {}) };
+                        this.lastStatsUpdateAt = data.updated_at || new Date().toISOString();
+                    } catch (e) {
+                        console.warn('Canlı sayaçlar güncellenemedi:', e);
+                    }
+                },
+
+                async manualRefresh() {
+                    await this.fetchDashboardData(true);
+                    if (this.filterMode === 'live') await this.refreshLiveStats();
+                },
+
+                async fetchDashboardData(forceRefresh = false) {
+                    let url = this.buildApiUrl();
+                    if (!url) return;
+                    if (forceRefresh) url += '&refresh=1';
+
+                    this.syncFilterState();
+                    this.loading = true;
+
+                    try {
+                        const res = await fetch(url);
+                        const data = await res.json();
+
+                        if (!data.ok) {
+                            throw new Error(data.error || 'api_error');
+                        }
+
+                        const transformed = transformApiData(data);
+
+                        const selectedName = this.selectedUser?.n || '';
+                        this.stats = transformed.stats || {};
+                        this.users = transformed.users || [];
+                        this.words = transformed.words || [];
+                        this.emotes = transformed.emotes || [];
+                        this.spam = transformed.spam || [];
+                        this.moderation = transformed.moderation || {
+                            summary: {},
+                            mods: [],
+                            recent_actions: []
+                        };
+
+                        this.apiMeta = data.meta || {};
+                        this.selectedStream = data.stream || null;
+                        if (selectedName) {
+                            const found = this.users.find(u => String(u.n || '').toLowerCase() === String(selectedName).toLowerCase());
+                            if (found && this.selectedUser) this.selectedUser = mergeUserSummaryPreservingDetail(this.selectedUser, found);
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        alert('API verisi okunamadı.');
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                handleModeChange() {
+                    if (this.filterMode === 'stream' && !this.selectedStreamId && this.streamOptions.length > 0) {
+                        this.selectedStreamId = String(this.streamOptions[0].id);
+                    }
+
+                    this.syncFilterState();
+                    this.fetchDashboardData();
+                    this.setupAutoRefresh();
+                },
+
+                setupAutoRefresh() {
+                    if (this.autoRefreshTimer) {
+                        clearInterval(this.autoRefreshTimer);
+                        this.autoRefreshTimer = null;
+                    }
+
+                    if (this.filterMode === 'live') {
+                        this.autoRefreshTimer = setInterval(() => {
+                            this.refreshLiveStats();
+                        }, 30000);
+                    }
+                },
+
+                initLiveKickChat() {
+                    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const socket = new WebSocket(`${protocol}//${location.host}/ws`);
+                    this.socketRef = socket;
+
+                    socket.onopen = () => {
+                        this.isConnected = true;
+                    };
+
+                    socket.onclose = () => {
+                        this.isConnected = false;
+                        setTimeout(() => this.initLiveKickChat(), 5000);
+                    };
+
+                    socket.onerror = () => {
+                        this.isConnected = false;
+                    };
+
+                    socket.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            const items = data.type === 'batch' ? (data.items || []) : [data];
+                            for (const item of items) {
+                                if (item.type !== 'chat') continue;
+                                this.liveMessages.unshift({
+                                    u: item.user || 'Bilinmeyen Kullanıcı',
+                                    m: String(item.msg || ''),
+                                    t: item.t || item.time || new Date().toISOString()
+                                });
+                            }
+                            if (this.liveMessages.length > 50) this.liveMessages.splice(50);
+                        } catch (e) {
+                            console.error('WS mesaj parse hatası:', e);
+                        }
+                    };
+                }
+            },
+
+            async mounted() {
+                const saved = getFilterState();
+                this.filterMode = saved.mode || 'live';
+                this.selectedStreamId = saved.stream_id || '';
+                this.selectedDate = saved.date || this.selectedDate;
+                this.selectedMonth = saved.month || this.selectedMonth;
+
+                await this.fetchStreams();
+
+                if (this.filterMode === 'stream' && !this.selectedStreamId && this.streamOptions.length > 0) {
+                    this.selectedStreamId = String(this.streamOptions[0].id);
+                }
+
+                await this.fetchDashboardData();
+                this.setupAutoRefresh();
+                this.initLiveKickChat();
+
+                window.addEventListener('storage', async (event) => {
+                    if (event.key === 'rr_shared_filter_state_v1') {
+                        const saved = getFilterState();
+                        this.filterMode = saved.mode || 'live';
+                        this.selectedStreamId = saved.stream_id || '';
+                        this.selectedDate = saved.date || this.selectedDate;
+                        this.selectedMonth = saved.month || this.selectedMonth;
+
+                        await this.fetchStreams();
+                        await this.fetchDashboardData();
+                        this.setupAutoRefresh();
+                    }
+                });
+            },
+
+            beforeUnmount() {
+                try {
+                    if (this.socketRef) this.socketRef.close();
+                } catch (e) {}
+
+                if (this.autoRefreshTimer) {
+                    clearInterval(this.autoRefreshTimer);
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

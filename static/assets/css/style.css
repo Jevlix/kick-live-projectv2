@@ -1,0 +1,232 @@
+:root {
+    --rr-bg: #05070b;
+    --rr-panel: rgba(14, 18, 25, 0.78);
+    --rr-panel-strong: #0d1118;
+    --rr-border: rgba(255,255,255,0.07);
+    --rr-pink: #ec4899;
+    --rr-cyan: #22d3ee;
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+
+body {
+    font-family: 'Inter', sans-serif;
+    background:
+        radial-gradient(900px 500px at 0% -10%, rgba(236,72,153,.13), transparent 55%),
+        radial-gradient(700px 500px at 100% 0%, rgba(34,211,238,.09), transparent 50%),
+        var(--rr-bg);
+    color: #f1f5f9;
+    overflow: hidden;
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(120deg, rgba(255,255,255,.018), transparent 40%, rgba(255,255,255,.008));
+    z-index: -1;
+}
+
+.glass {
+    background: linear-gradient(180deg, rgba(16,20,28,.9), rgba(10,13,19,.92));
+    border: 1px solid var(--rr-border);
+    box-shadow: 0 18px 50px rgba(0,0,0,.22);
+    backdrop-filter: blur(18px);
+}
+
+.app-sidebar {
+    width: 278px;
+    min-width: 278px;
+    height: 100vh;
+    padding: 22px 16px 16px;
+    gap: 14px;
+    border-right: 1px solid rgba(255,255,255,.06);
+    overflow-y: auto;
+}
+
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 4px 6px 8px;
+}
+
+.brand-mark {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #ec4899, #be185d);
+    color: #fff;
+    font-weight: 950;
+    letter-spacing: -.08em;
+    box-shadow: 0 12px 28px rgba(236,72,153,.25);
+}
+
+.brand-title {
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+    font-weight: 950;
+    letter-spacing: -.055em;
+    text-transform: uppercase;
+}
+
+.brand-subtitle {
+    color: rgba(255,255,255,.35);
+    font-size: 8px;
+    line-height: 1;
+    margin-top: 5px;
+    letter-spacing: .16em;
+    font-weight: 900;
+}
+
+.sidebar-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 11px;
+    border-radius: 12px;
+    background: rgba(34,197,94,.05);
+    border: 1px solid rgba(34,197,94,.10);
+    color: rgba(187,247,208,.85);
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: #4ade80;
+    box-shadow: 0 0 12px rgba(74,222,128,.65);
+    animation: rrPulse 1.9s ease-in-out infinite;
+}
+
+.sidebar-nav { display: flex; flex-direction: column; gap: 4px; }
+.sidebar-section-label {
+    padding: 11px 10px 6px;
+    color: rgba(255,255,255,.28);
+    font-size: 9px;
+    font-weight: 950;
+    letter-spacing: .18em;
+}
+
+.sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 43px;
+    padding: 8px 10px;
+    border-radius: 14px;
+    color: rgba(255,255,255,.66);
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 850;
+    transition: transform .18s ease, background .18s ease, color .18s ease, border-color .18s ease;
+    border: 1px solid transparent;
+}
+
+.sidebar-link:hover {
+    color: #fff;
+    background: rgba(255,255,255,.05);
+    border-color: rgba(255,255,255,.06);
+    transform: translateX(2px);
+}
+
+.sidebar-link-active {
+    color: #fff !important;
+    background: linear-gradient(135deg, rgba(236,72,153,.18), rgba(236,72,153,.05));
+    border-color: rgba(236,72,153,.25);
+    box-shadow: inset 3px 0 0 #ec4899, 0 8px 24px rgba(236,72,153,.08);
+}
+
+.sidebar-icon {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    background: rgba(255,255,255,.04);
+    color: rgba(255,255,255,.4);
+    transition: .18s ease;
+}
+
+.sidebar-icon-active { background: rgba(236,72,153,.14); color: #f9a8d4; }
+.sidebar-link:hover .sidebar-icon { color: #fff; background: rgba(255,255,255,.07); }
+
+.sidebar-clock-card {
+    margin-top: auto;
+    padding: 14px;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,.07);
+    background: linear-gradient(145deg, rgba(255,255,255,.05), rgba(255,255,255,.015));
+}
+
+.sidebar-clock {
+    margin-top: 4px;
+    font-size: 25px;
+    line-height: 1;
+    font-weight: 950;
+    letter-spacing: -.045em;
+    color: #fff;
+}
+
+.sidebar-date {
+    margin-top: 5px;
+    color: rgba(255,255,255,.35);
+    font-size: 9px;
+    font-weight: 800;
+}
+
+.active-link {
+    background: #ec4899 !important;
+    color: white !important;
+}
+
+.scroll-flat::-webkit-scrollbar { height: 5px; width: 5px; }
+.scroll-flat::-webkit-scrollbar-thumb { background: rgba(236,72,153,.8); border-radius: 999px; }
+.scroll-flat::-webkit-scrollbar-track { background: transparent; }
+
+.page-section { overflow-y: auto; overflow-x: visible !important; }
+
+.stat-card {
+    background: linear-gradient(180deg, rgba(17,22,30,.88), rgba(10,13,19,.92));
+    border: 1px solid rgba(255,255,255,.06);
+    border-radius: 24px;
+    padding: 24px;
+    box-shadow: 0 18px 40px rgba(0,0,0,.15);
+}
+
+.stat-card:hover { border-color: rgba(236,72,153,.12); }
+
+.table-row {
+    background: rgba(255,255,255,.025);
+    border: 1px solid rgba(255,255,255,.05);
+    border-radius: 18px;
+}
+
+select, input, textarea { background: #0a0e14 !important; color: white !important; }
+select option { background:#0b0f14; color:white; }
+
+#app, #app > main, main > section, main > div { min-height: 0; }
+
+#global-data-loader .label {
+    border-color: rgba(236,72,153,.15) !important;
+    box-shadow: 0 10px 32px rgba(0,0,0,.25);
+}
+
+@keyframes rrPulse { 0%,100% { opacity:.6; transform:scale(.95); } 50% { opacity:1; transform:scale(1); } }
+
+@media (max-width: 900px) {
+    .app-sidebar { width: 84px; min-width: 84px; padding: 14px 9px; }
+    .brand-title, .brand-subtitle, .sidebar-status span:not(.status-dot), .sidebar-section-label, .sidebar-link > span:last-child, .sidebar-clock-card { display:none; }
+    .sidebar-brand { justify-content:center; }
+    .sidebar-link { justify-content:center; }
+    .sidebar-icon { width: 38px; height: 38px; }
+}
