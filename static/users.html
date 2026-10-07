@@ -355,11 +355,11 @@
                     }
 
                     const date = stream.started_at
-                        ? new Date(stream.started_at).toLocaleDateString('tr-TR')
+                        ? new Date(stream.started_at).toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' })
                         : '-';
 
                     const started = stream.started_at
-                        ? new Date(stream.started_at).toLocaleTimeString('tr-TR', {
+                        ? new Date(stream.started_at).toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul',
                             hour: '2-digit',
                             minute: '2-digit'
                         })

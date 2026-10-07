@@ -157,7 +157,6 @@
                                 <option value="timeouts">Timeout</option>
                                 <option value="bans">Ban</option>
                                 <option value="unbans">Unban</option>
-                                <option value="deleted">Silinen Mesaj</option>
                                 <option value="total">Toplam Ceza</option>
                                 <option value="recent">Son Ceza</option>
                                 <option value="name">İsim</option>
@@ -174,7 +173,6 @@
                                 <option value="timeouts">Timeout Yiyenler</option>
                                 <option value="bans">Ban Yiyenler</option>
                                 <option value="unbans">Unban Alanlar</option>
-                                <option value="deleted">Mesajı Silinenler</option>
                             </select>
                         </div>
 
@@ -240,10 +238,6 @@
                     <div class="stat-card">
                         <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Unban</p>
                         <h3 class="text-3xl font-black text-green-400">{{ totalUnbanCount }}</h3>
-                    </div>
-                    <div class="stat-card">
-                        <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Silinen Mesaj</p>
-                        <h3 class="text-3xl font-black text-pink-400">{{ totalDeletedCount }}</h3>
                     </div>
                 </div>
             </section>
@@ -331,7 +325,7 @@
                                     <p class="text-sm">
                                         <span class="font-black">{{ action.target || 'Bilinmiyor' }}</span>
                                         <span class="opacity-60">←</span>
-                                        <span class="text-cyan-400 font-black">{{ action.mod || 'Unknown Mod' }}</span>
+                                        <span class="text-cyan-400 font-black">{{ action.mod || 'Bilinmiyor' }}</span>
                                     </p>
 
                                     <p v-if="action.reason" class="text-xs opacity-60 mt-2">Sebep: {{ action.reason }}</p>
@@ -374,9 +368,6 @@
                             <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
                                 <p class="text-green-400 text-2xl">{{ selectedUser.mod_received?.unbans || 0 }}</p>Unban
                             </div>
-                            <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
-                                <p class="text-pink-400 text-2xl">{{ selectedUser.mod_received?.deleted_messages || 0 }}</p>Silinen Mesaj
-                            </div>
                         </div>
 
                         <div class="mt-8 bg-white/5 p-4 rounded-3xl border border-white/5">
@@ -411,7 +402,7 @@
 
                             <p class="text-base">
                                 Mod:
-                                <span class="font-black text-cyan-400">{{ log.mod || 'Unknown Mod' }}</span>
+                                <span class="font-black text-cyan-400">{{ log.mod || 'Bilinmiyor' }}</span>
                             </p>
 
                             <p v-if="log.duration" class="text-sm opacity-70 mt-2">Süre: {{ log.duration }}</p>
@@ -494,12 +485,6 @@
                         .sort((a, b) => (b.mod_received?.unbans || 0) - (a.mod_received?.unbans || 0));
                 },
 
-                deletedUsers() {
-                    return this.users
-                        .filter(u => (u.mod_received?.deleted_messages || 0) > 0)
-                        .sort((a, b) => (b.mod_received?.deleted_messages || 0) - (a.mod_received?.deleted_messages || 0));
-                },
-
                 filteredUsers() {
                     const q = String(this.search || '').toLowerCase().trim();
 
@@ -510,8 +495,7 @@
                         if (this.penaltyFilter === 'timeouts') return (u.mod_received?.timeouts || 0) > 0;
                         if (this.penaltyFilter === 'bans') return (u.mod_received?.bans || 0) > 0;
                         if (this.penaltyFilter === 'unbans') return (u.mod_received?.unbans || 0) > 0;
-                        if (this.penaltyFilter === 'deleted') return (u.mod_received?.deleted_messages || 0) > 0;
-
+                        
                         return this.getTotalPenaltyForUser(u) > 0;
                     });
 
@@ -521,8 +505,6 @@
                         list.sort((a, b) => (b.mod_received?.bans || 0) - (a.mod_received?.bans || 0));
                     } else if (this.sortBy === 'unbans') {
                         list.sort((a, b) => (b.mod_received?.unbans || 0) - (a.mod_received?.unbans || 0));
-                    } else if (this.sortBy === 'deleted') {
-                        list.sort((a, b) => (b.mod_received?.deleted_messages || 0) - (a.mod_received?.deleted_messages || 0));
                     } else if (this.sortBy === 'total') {
                         list.sort((a, b) => this.getTotalPenaltyForUser(b) - this.getTotalPenaltyForUser(a));
                     } else if (this.sortBy === 'recent') {
@@ -548,8 +530,6 @@
                         if (this.penaltyFilter === 'timeouts') return actionType === 'timeout';
                         if (this.penaltyFilter === 'bans') return actionType === 'ban';
                         if (this.penaltyFilter === 'unbans') return actionType === 'unban';
-                        if (this.penaltyFilter === 'deleted') return actionType === 'deleted_message' || actionType === 'delete' || actionType === 'deleted';
-
                         return true;
                     });
 
@@ -574,15 +554,11 @@
                     return this.filteredUsers.reduce((sum, u) => sum + (u.mod_received?.unbans || 0), 0);
                 },
 
-                totalDeletedCount() {
-                    return this.filteredUsers.reduce((sum, u) => sum + (u.mod_received?.deleted_messages || 0), 0);
-                },
-
                 lastUpdatedText() {
                     if (!this.lastUpdatedAt) return '-';
 
                     try {
-                        return new Date(this.lastUpdatedAt).toLocaleString('tr-TR');
+                        return new Date(this.lastUpdatedAt).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
                     } catch (e) {
                         return this.lastUpdatedAt;
                     }
@@ -647,11 +623,11 @@
                     }
 
                     const date = stream.started_at
-                        ? new Date(stream.started_at).toLocaleDateString('tr-TR')
+                        ? new Date(stream.started_at).toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' })
                         : '-';
 
                     const started = stream.started_at
-                        ? new Date(stream.started_at).toLocaleTimeString('tr-TR', {
+                        ? new Date(stream.started_at).toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul',
                             hour: '2-digit',
                             minute: '2-digit'
                         })
@@ -678,8 +654,7 @@
                     return (
                         (user?.mod_received?.timeouts || 0) +
                         (user?.mod_received?.bans || 0) +
-                        (user?.mod_received?.unbans || 0) +
-                        (user?.mod_received?.deleted_messages || 0)
+                        (user?.mod_received?.unbans || 0)
                     );
                 },
 

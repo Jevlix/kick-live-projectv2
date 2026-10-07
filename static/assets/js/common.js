@@ -39,7 +39,7 @@ function parseMessage(msg) {
 }
 
 const RR_FILTER_KEY = 'rr_shared_filter_state_v1';
-const RR_TIME_ZONE = 'Europe/Nicosia';
+const RR_TIME_ZONE = 'Europe/Istanbul';
 
 function formatDateTime(value, options = {}) {
     if (!value) return '-';
@@ -263,7 +263,8 @@ function buildModerationFromEvents(events) {
 
     for (const ev of events || []) {
         const type = ev.event_type;
-        const modName = ev.moderator || 'Unknown Mod';
+        const rawModName = ev.moderator || ev.mod || '';
+        const modName = ['unknown mod','unknown','null','none'].includes(String(rawModName).trim().toLowerCase()) ? 'Bilinmiyor' : (String(rawModName).trim().toLowerCase() === 'kick/system' ? 'Kick/System' : (rawModName || 'Bilinmiyor'));
 
         if (!['deleted', 'ban', 'unban'].includes(type)) continue;
 
@@ -474,8 +475,9 @@ function transformApiData(apiData) {
         users,
         words: (apiWords || []).map(w => ({
             w: w.word || w.w,
-            c: w.count ?? w.c,
-            top: w.top || []
+            c: Number(w.count ?? w.c ?? 0),
+            unique_users: Number(w.unique_users ?? 0),
+            top: Array.isArray(w.top) ? w.top : []
         })),
         emotes,
         spam,
@@ -529,6 +531,10 @@ function sidebarHtml(activePage) {
         </a>`;
     };
     return `
+        <button type="button" class="mobile-menu-toggle" aria-label="Menüyü aç" onclick="toggleMobileSidebar()">
+            <i class="fa fa-bars"></i>
+        </button>
+        <div class="mobile-sidebar-backdrop" onclick="closeMobileSidebar()"></div>
         <aside class="app-sidebar glass flex flex-col z-20">
             <div class="sidebar-brand">
                 <div class="brand-mark">RR</div>
@@ -554,11 +560,11 @@ function sidebarHtml(activePage) {
                 ${link('/cezalar.html','fa fa-gavel','Ceza Sıralaması','cezalar','orange')}
 
                 <div class="sidebar-section-label mt-4">OYUN</div>
-                ${link('/arena.html','fa fa-trophy','Gagara Arena','arena')}
+                ${link('/arena.html','fa fa-trophy','Gagara Arena','arena','violet')}
             </nav>
 
             <div class="sidebar-clock-card">
-                <div class="text-[9px] font-black tracking-[0.18em] uppercase text-white/35">KIBRIS SAATİ</div>
+                <div class="text-[9px] font-black tracking-[0.18em] uppercase text-white/35">TÜRKİYE SAATİ</div>
                 <div id="rr-site-clock" class="sidebar-clock">--:--:--</div>
                 <div id="rr-site-date" class="sidebar-date">--</div>
             </div>
@@ -617,5 +623,16 @@ function formatChatTime(value) {
 function formatEventDateTime(value) {
     return formatDateTime(value);
 }
+
+function toggleMobileSidebar() {
+    document.body.classList.toggle('sidebar-open');
+}
+function closeMobileSidebar() {
+    document.body.classList.remove('sidebar-open');
+}
+document.addEventListener('click', (event) => {
+    const a = event.target.closest('.sidebar-link');
+    if (a) closeMobileSidebar();
+});
 
 startSiteClock();

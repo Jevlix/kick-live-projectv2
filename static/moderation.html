@@ -275,9 +275,6 @@
                                     <div class="bg-white/5 p-3 rounded-2xl border border-white/5">
                                         <p class="text-green-400 text-lg">{{ mod.unbans || 0 }}</p>Unban
                                     </div>
-                                    <div class="bg-white/5 p-3 rounded-2xl border border-white/5">
-                                        <p class="text-pink-400 text-lg">{{ mod.deleted_messages || 0 }}</p>Silme
-                                    </div>
                                 </div>
                             </div>
 
@@ -307,7 +304,7 @@
                                 </div>
 
                                 <p class="text-sm">
-                                    <span class="text-cyan-400 font-black">{{ action.mod || 'Unknown Mod' }}</span>
+                                    <span class="text-cyan-400 font-black">{{ action.mod || 'Bilinmiyor' }}</span>
                                     →
                                     <span class="font-black">{{ action.target || 'Bilinmiyor' }}</span>
                                 </p>
@@ -341,7 +338,7 @@
                             <button @click="selectedMod = null" class="text-5xl hover:text-red-500 transition leading-none ml-4">&times;</button>
                         </div>
 
-                        <div class="grid grid-cols-4 gap-4 mt-8 text-center text-[10px] font-black uppercase tracking-tighter">
+                        <div class="grid grid-cols-3 gap-4 mt-8 text-center text-[10px] font-black uppercase tracking-tighter">
                             <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
                                 <p class="text-yellow-400 text-2xl">{{ selectedMod.timeouts || 0 }}</p>Timeout
                             </div>
@@ -350,9 +347,6 @@
                             </div>
                             <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
                                 <p class="text-green-400 text-2xl">{{ selectedMod.unbans || 0 }}</p>Unban
-                            </div>
-                            <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
-                                <p class="text-pink-400 text-2xl">{{ selectedMod.deleted_messages || 0 }}</p>Silme
                             </div>
                         </div>
 
@@ -533,7 +527,7 @@
                     if (!this.lastUpdatedAt) return '-';
 
                     try {
-                        return new Date(this.lastUpdatedAt).toLocaleString('tr-TR');
+                        return new Date(this.lastUpdatedAt).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
                     } catch (e) {
                         return this.lastUpdatedAt;
                     }
@@ -600,11 +594,11 @@
                     }
 
                     const date = stream.started_at
-                        ? new Date(stream.started_at).toLocaleDateString('tr-TR')
+                        ? new Date(stream.started_at).toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' })
                         : '-';
 
                     const started = stream.started_at
-                        ? new Date(stream.started_at).toLocaleTimeString('tr-TR', {
+                        ? new Date(stream.started_at).toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul',
                             hour: '2-digit',
                             minute: '2-digit'
                         })
@@ -621,7 +615,7 @@
                     const u = String(username || '').toLowerCase().trim();
 
                     if (!u) return false;
-                    if (this.excludeSystem && (u === 'system' || u === 'kick system' || u === 'bot')) return true;
+                    if (this.excludeSystem && (u === 'system' || u === 'kick system' || u === 'kick/system' || u === 'kick' || u === 'bot')) return true;
                     if (this.excludeBotrix && u.includes('botrix')) return true;
 
                     return false;
@@ -654,7 +648,10 @@
                         const eventType = String(ev.event_type || '').toLowerCase();
                         if (eventType !== 'moderation') continue;
 
-                        const modName = ev.moderator || ev.mod || ev.username || 'Unknown Mod';
+                        const rawModName = ev.moderator || ev.mod || ev.username || '';
+                        const modName = ['unknown mod','unknown','null','none'].includes(String(rawModName).trim().toLowerCase())
+                            ? 'Bilinmiyor'
+                            : (String(rawModName).trim().toLowerCase() === 'kick/system' ? 'Kick/System' : (rawModName || 'Bilinmiyor'));
                         if (this.isFilteredUser(modName)) continue;
 
                         const action = this.normalizeAction(ev.action || ev.moderation_action || ev.type || '');
@@ -680,7 +677,7 @@
                         }
 
                         const mod = modsMap[modName];
-                        mod.total_actions += 1;
+                        if (action !== 'deleted_message' && action !== 'delete') mod.total_actions += 1;
                         summary.total_actions += 1;
 
                         if (action === 'timeout') {

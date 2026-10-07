@@ -132,6 +132,16 @@
                     </div>
                 </div>
 
+                <div class="rr-live-status-grid">
+                    <div v-for="card in liveStatusCards" :key="card.label" class="rr-live-status-card">
+                        <div class="rr-live-status-icon" :class="'tone-' + card.tone"><i :class="'fa ' + card.icon"></i></div>
+                        <div class="min-w-0">
+                            <div class="rr-live-status-label">{{ card.label }}</div>
+                            <div class="rr-live-status-value">{{ card.value }}</div>
+                        </div>
+                    </div>
+                </div>
+
                 <div>
                     <h4 class="mb-6 font-black text-xl flex items-center gap-2 italic">
                         <div class="w-1 h-6 bg-cyan-400"></div>
@@ -158,14 +168,6 @@
                         <div class="stat-card">
                             <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Mesaj Silme</p>
                             <h3 class="text-3xl font-black text-pink-400">{{ moderationSummary.deleted_messages || 0 }}</h3>
-                        </div>
-                        <div class="stat-card">
-                            <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Subscription</p>
-                            <h3 class="text-3xl font-black text-purple-400">{{ stats.subscriptions || 0 }}</h3>
-                        </div>
-                        <div class="stat-card">
-                            <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Gift Sub</p>
-                            <h3 class="text-3xl font-black text-emerald-400">{{ stats.gift_subscriptions || 0 }}</h3>
                         </div>
                     </div>
                 </div>
@@ -320,7 +322,7 @@
                                 </div>
 
                                 <p class="text-sm break-words">
-                                    <span class="text-cyan-400 font-black">{{ action.mod || 'Unknown Mod' }}</span>
+                                    <span class="text-cyan-400 font-black">{{ action.mod || 'Bilinmiyor' }}</span>
                                     →
                                     <span class="font-black">{{ action.target || 'Bilinmiyor' }}</span>
                                 </p>
@@ -424,6 +426,7 @@
 
                 return {
                     stats: {},
+                    liveMeta: {},
                     users: [],
                     words: [],
                     emotes: [],
@@ -489,7 +492,7 @@
                 filteredModsForSummary() {
                     return (this.moderation?.mods || []).filter(m => {
                         const n = String(m.n || '').toLowerCase();
-                        return n !== 'system/bot' && n !== 'botrix';
+                        return n !== 'system/bot' && n !== 'botrix' && n !== 'kick/system';
                     });
                 },
 
@@ -503,6 +506,16 @@
 
                 recentModActions() {
                     return (this.moderation?.recent_actions || []).slice().reverse().slice(0, 15);
+                },
+                liveStatusCards() {
+                    const c = this.liveMeta || {};
+                    return [
+                        { label: 'Canlı İzleyici', value: c.viewer_count ?? this.selectedStream?.viewer_count ?? 0, icon: 'fa-eye', tone: 'cyan' },
+                        { label: 'Abone Sohbeti', value: c.subscribers_only ? 'Açık' : 'Kapalı', icon: 'fa-star', tone: 'violet' },
+                        { label: 'Takipçi Modu', value: c.followers_only ? 'Açık' : 'Kapalı', icon: 'fa-user-check', tone: 'blue' },
+                        { label: 'Yavaş Mod', value: c.slow_mode ? `${c.slow_mode_seconds || ''} sn`.trim() : 'Kapalı', icon: 'fa-hourglass-half', tone: 'amber' },
+                        { label: 'Emote Modu', value: c.emote_only ? 'Açık' : 'Kapalı', icon: 'fa-face-smile', tone: 'pink' }
+                    ];
                 }
             },
 
@@ -517,7 +530,7 @@
 
                     const date = stream?.label_date ? formatHumanDate(stream.label_date) : '-';
                     const started = stream?.started_at
-                        ? new Date(stream.started_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+                        ? new Date(stream.started_at).toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit' })
                         : '--:--';
 
                     const suffix = stream?.session_type === 'offstream' ? 'offstream' : 'yayını';
@@ -610,8 +623,20 @@
                     }
                 },
 
+                async fetchLiveStatus() {
+                    try {
+                        const res = await fetch('/api/status');
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        if (data.ok) this.liveMeta = data.channel || {};
+                    } catch (e) {
+                        console.warn('Kanal durumu alınamadı:', e);
+                    }
+                },
+
                 async manualRefresh() {
                     await this.fetchDashboardData(true);
+                    await this.fetchLiveStatus();
                     if (this.filterMode === 'live') await this.refreshLiveStats();
                 },
 
@@ -678,6 +703,7 @@
                     if (this.filterMode === 'live') {
                         this.autoRefreshTimer = setInterval(() => {
                             this.refreshLiveStats();
+                            this.fetchLiveStatus();
                         }, 30000);
                     }
                 },
@@ -734,6 +760,7 @@
                 }
 
                 await this.fetchDashboardData();
+                await this.fetchLiveStatus();
                 this.setupAutoRefresh();
                 this.initLiveKickChat();
 

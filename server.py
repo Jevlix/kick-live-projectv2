@@ -68,6 +68,15 @@ def row_dict(row):
     return dict(row) if row else None
 
 
+def normalize_mod_name(value):
+    raw = str(value or '').strip()
+    if not raw or raw.lower() in {'unknown mod', 'unknown', 'null', 'none'}:
+        return 'Bilinmiyor'
+    if raw.lower() in {'kick/system', 'kick system', 'system'}:
+        return 'Kick/System'
+    return raw
+
+
 def build_stream_label(row):
     if not row:
         return 'Yayın'
@@ -376,7 +385,42 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
         WHERE stream_id IN ({ph}) AND word NOT LIKE 'emote:%' COLLATE NOCASE
         AND word NOT LIKE '[emote:%' COLLATE NOCASE
         GROUP BY word ORDER BY c DESC LIMIT 2500""", ids).fetchall()
-    words = [{'w': r['w'], 'c': r['c'], 'top': []} for r in word_rows]
+
+    # Build unique-user + top-user data once for the word leaderboard.
+    word_unique_rows = conn.execute(f"""SELECT word, COUNT(DISTINCT user_id) unique_users
+        FROM user_word_stats
+        WHERE stream_id IN ({ph}) AND word NOT LIKE 'emote:%' COLLATE NOCASE
+        AND word NOT LIKE '[emote:%' COLLATE NOCASE
+        GROUP BY word""", ids).fetchall()
+    word_unique_map = {str(r['word']).lower(): int(r['unique_users'] or 0) for r in word_unique_rows}
+
+    top_word_users = conn.execute(f"""
+        WITH ranked AS (
+            SELECT uw.word, MAX(u.username) username, SUM(uw.count) c,
+                ROW_NUMBER() OVER (PARTITION BY LOWER(uw.word) ORDER BY SUM(uw.count) DESC) rn
+            FROM user_word_stats uw
+            LEFT JOIN users u ON u.id=uw.user_id
+            WHERE uw.stream_id IN ({ph})
+              AND uw.word NOT LIKE 'emote:%' COLLATE NOCASE
+              AND uw.word NOT LIKE '[emote:%' COLLATE NOCASE
+            GROUP BY LOWER(uw.word), uw.user_id
+        )
+        SELECT word, username, c FROM ranked WHERE rn <= 10
+        ORDER BY LOWER(word), c DESC
+    """, ids).fetchall()
+    word_top_map = defaultdict(list)
+    for r in top_word_users:
+        word_top_map[str(r['word']).lower()].append({
+            'name': r['username'] or 'Bilinmiyor',
+            'count': int(r['c'] or 0)
+        })
+
+    words = [{
+        'w': r['w'],
+        'c': int(r['c'] or 0),
+        'unique_users': word_unique_map.get(str(r['w']).lower(), 0),
+        'top': word_top_map.get(str(r['w']).lower(), [])
+    } for r in word_rows]
 
     emote_rows = conn.execute(f"""SELECT emote_id id, MAX(emote_name) n, SUM(count) c
         FROM emote_stats WHERE stream_id IN ({ph}) GROUP BY emote_id ORDER BY c DESC LIMIT 1200""", ids).fetchall()
@@ -446,13 +490,14 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
     recent_mod = [dict(r) for r in reversed(recent_mod_rows)]
     mods_map = {}
     for ev in recent_mod:
-        mod_name = ev.get('moderator') or 'Kick/System'
+        mod_name = normalize_mod_name(ev.get('moderator') or ev.get('mod') or '')
         mod = mods_map.setdefault(mod_name, {
             'n': mod_name, 'total_actions': 0, 'timeouts': 0, 'bans': 0, 'unbans': 0,
             'deleted_messages': 0, 'last_action_at': None, 'top_targets': [], 'top_reasons': [], 'logs': []
         })
         et = ev.get('event_type')
-        mod['total_actions'] += 1
+        if et != 'deleted':
+            mod['total_actions'] += 1
         if et == 'timeout': mod['timeouts'] += 1
         elif et == 'ban':
             if ev.get('permanent'): mod['bans'] += 1
@@ -620,10 +665,11 @@ async def api_status():
             db_stats = dict(row) if row else None
     finally:
         conn.close()
+    channel = meta or {'slug': CHANNEL_SLUG}
     return {
         'ok': True,
-        'channel': meta or {'slug': CHANNEL_SLUG},
-        'live': bool(meta and meta.get('is_live')),
+        'channel': channel,
+        'live': bool(channel.get('is_live')),
         'active_stream': row_dict(active),
         'recorder_stats': recorder.stats if recorder else {},
         'recorder_task_done': bool(recorder_task and recorder_task.done()),
@@ -811,8 +857,24 @@ async def api_emotes(stream_id: Optional[int] = None):
             unique = {str(r['emote_id']): r['unique_users'] for r in conn.execute(
                 f'SELECT emote_id,COUNT(DISTINCT user_id) unique_users FROM user_emote_stats WHERE stream_id IN ({ph}) GROUP BY emote_id', ids
             ).fetchall()}
+            top_rows = conn.execute(f"""
+                WITH ranked AS (
+                    SELECT ue.emote_id, MAX(u.username) username, SUM(ue.count) c,
+                        ROW_NUMBER() OVER (PARTITION BY ue.emote_id ORDER BY SUM(ue.count) DESC) rn
+                    FROM user_emote_stats ue
+                    LEFT JOIN users u ON u.id=ue.user_id
+                    WHERE ue.stream_id IN ({ph})
+                    GROUP BY ue.emote_id, ue.user_id
+                )
+                SELECT emote_id, username, c FROM ranked WHERE rn <= 5
+                ORDER BY emote_id, c DESC
+            """, ids).fetchall()
+            top_map = defaultdict(list)
+            for r in top_rows:
+                top_map[str(r['emote_id'])].append({'u': r['username'] or 'Bilinmiyor', 'c': int(r['c'] or 0)})
             return {'ok': True, 'emotes': [
-                {'id': str(r['id']), 'n': r['n'], 'c': r['c'], 'unique_users': unique.get(str(r['id']), 0), 'top': []}
+                {'id': str(r['id']), 'n': r['n'], 'c': r['c'], 'unique_users': unique.get(str(r['id']), 0),
+                 'top': top_map.get(str(r['id']), [])}
                 for r in rows
             ]}
         finally:
