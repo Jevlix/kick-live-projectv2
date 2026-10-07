@@ -54,3 +54,11 @@ Kick Public API canlı kanal/livestream metadata sağlayabilir. `events:subscrib
 Bu paket veri alımını hızlandırmak için cache, set-based SQL summary, WebSocket batching, 30 saniyelik canlı sayaç yenilemesi, batch JSONL loglama, API rate limit ve HTTP compression içerir. Geçmiş yayınlar için kalıcı `stream_summary_cache` kullanılır.
 
 Ayrıntılar: `PERFORMANS_VE_10K.md`
+
+
+## V11.0.0
+- Ceza Sıralaması için ayrı, indeksli `/api/penalties` endpoint'i eklendi; yalnız timeout/ban/unban sayılır.
+- Emoji sıralamasında Top Kullananlar alanı yeniden düzenlendi ve responsive hale getirildi.
+- Spam tespiti Kick emote/emoji tokenlarını tekrar hesabından çıkarır; emote-only mesajlar spam sayılmaz.
+- Moderasyona aksiyon ikonları, normalize isimler ve tarih/saat verileri eklendi.
+- HTML cache bust ve API cache katmanı korunarak tasarım güncellendi; DB şeması değiştirilmedi.

@@ -9,7 +9,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/style.css">
+    <link rel="stylesheet" href="/assets/css/style.css?v=11.0.0">
 </head>
 <body>
     <div id="app" class="flex h-screen overflow-hidden">
@@ -210,46 +210,65 @@
                         </div>
                     </div>
 
-                    <div class="stat-card xl:col-span-1">
-                        <div class="flex items-center justify-between mb-6">
+                    <div class="stat-card quick-summary-card xl:col-span-1">
+                        <div class="quick-summary-head">
                             <h4 class="font-black text-xl italic flex items-center gap-2">
-                                <div class="w-1 h-6 bg-blue-400"></div>
+                                <span class="quick-summary-title-icon"><i class="fa-solid fa-bolt"></i></span>
                                 HIZLI ÖZET
                             </h4>
+                            <span class="quick-summary-live-dot"><i class="fa-solid fa-circle"></i> ANLIK</span>
                         </div>
 
-                        <div class="space-y-3">
-                            <div class="table-row p-4">
-                                <p class="text-xs uppercase opacity-50 font-black mb-2">En aktif kullanıcı</p>
-                                <p class="text-pink-400 font-black text-lg break-all">{{ users[0]?.n || '-' }}</p>
+                        <div class="quick-summary-grid">
+                            <div class="quick-summary-item tone-pink">
+                                <div class="quick-summary-icon"><i class="fa-solid fa-user"></i></div>
+                                <div class="quick-summary-copy">
+                                    <p class="quick-summary-label">En aktif kullanıcı</p>
+                                    <p class="quick-summary-value truncate" :title="users[0]?.n || '-'">{{ users[0]?.n || '-' }}</p>
+                                </div>
                             </div>
 
-                            <div class="table-row p-4">
-                                <p class="text-xs uppercase opacity-50 font-black mb-2">En çok mesaj</p>
-                                <p class="text-pink-400 font-black text-lg">{{ users[0]?.mc || 0 }}</p>
+                            <div class="quick-summary-item tone-violet">
+                                <div class="quick-summary-icon"><i class="fa-solid fa-comments"></i></div>
+                                <div class="quick-summary-copy">
+                                    <p class="quick-summary-label">En çok mesaj</p>
+                                    <p class="quick-summary-value">{{ users[0]?.mc || 0 }}</p>
+                                </div>
                             </div>
 
-                            <div class="table-row p-4">
-                                <p class="text-xs uppercase opacity-50 font-black mb-2">En sık kelime</p>
-                                <p class="text-blue-400 font-black text-lg break-all">{{ words[0]?.w || '-' }}</p>
-                                <p class="text-xs opacity-50 mt-2">Kullanım: {{ words[0]?.c || 0 }}</p>
+                            <div class="quick-summary-item tone-blue">
+                                <div class="quick-summary-icon"><i class="fa-solid fa-font"></i></div>
+                                <div class="quick-summary-copy">
+                                    <p class="quick-summary-label">En sık kelime</p>
+                                    <p class="quick-summary-value truncate" :title="words[0]?.w || '-'">{{ words[0]?.w || '-' }}</p>
+                                    <p class="quick-summary-meta">{{ words[0]?.c || 0 }} kullanım</p>
+                                </div>
                             </div>
 
-                            <div class="table-row p-4">
-                                <p class="text-xs uppercase opacity-50 font-black mb-2">En sık emoji</p>
-                                <p class="text-yellow-400 font-black text-lg break-all">{{ emotes[0]?.n || '-' }}</p>
-                                <p class="text-xs opacity-50 mt-2">Kullanım: {{ emotes[0]?.c || 0 }}</p>
+                            <div class="quick-summary-item tone-yellow">
+                                <div class="quick-summary-icon"><i class="fa-solid fa-face-smile"></i></div>
+                                <div class="quick-summary-copy">
+                                    <p class="quick-summary-label">En sık emoji</p>
+                                    <p class="quick-summary-value truncate" :title="emotes[0]?.n || '-'">{{ emotes[0]?.n || '-' }}</p>
+                                    <p class="quick-summary-meta">{{ emotes[0]?.c || 0 }} kullanım</p>
+                                </div>
                             </div>
 
-                            <div class="table-row p-4">
-                                <p class="text-xs uppercase opacity-50 font-black mb-2">Spam kaydı</p>
-                                <p class="text-red-400 font-black text-lg">{{ spam.length || 0 }}</p>
+                            <div class="quick-summary-item tone-red">
+                                <div class="quick-summary-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                                <div class="quick-summary-copy">
+                                    <p class="quick-summary-label">Spam kaydı</p>
+                                    <p class="quick-summary-value">{{ spam.length || 0 }}</p>
+                                </div>
                             </div>
 
-                            <div class="table-row p-4">
-                                <p class="text-xs uppercase opacity-50 font-black mb-2">En aktif mod</p>
-                                <p class="text-cyan-400 font-black text-lg break-all">{{ topActiveMod?.n || '-' }}</p>
-                                <p class="text-xs opacity-50 mt-2">İşlem: {{ topActiveMod?.total_actions || 0 }}</p>
+                            <div class="quick-summary-item tone-cyan">
+                                <div class="quick-summary-icon"><i class="fa-solid fa-shield-halved"></i></div>
+                                <div class="quick-summary-copy">
+                                    <p class="quick-summary-label">En aktif mod</p>
+                                    <p class="quick-summary-value truncate" :title="topActiveMod?.n || '-'">{{ topActiveMod?.n || '-' }}</p>
+                                    <p class="quick-summary-meta">{{ topActiveMod?.total_actions || 0 }} işlem</p>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -413,7 +432,7 @@
         </transition>
     </div>
 
-    <script src="/assets/js/common.js"></script>
+    <script src="/assets/js/common.js?v=11.0.0"></script>
     <script>
         const { createApp } = Vue;
 

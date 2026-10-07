@@ -9,7 +9,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/css/style.css" />
+    <link rel="stylesheet" href="/assets/css/style.css?v=11.0.0" />
 
     <style>
         .scroll-flat::-webkit-scrollbar { width: 5px; }
@@ -25,9 +25,9 @@
             <header class="p-8 pb-4 flex flex-col gap-6">
                 <div class="flex justify-between items-end gap-6 flex-wrap">
                     <div>
-                        <h2 class="text-4xl font-black text-orange-400 uppercase tracking-tighter">Ceza Sıralaması</h2>
+                        <div class="page-title-icon tone-orange"><i class="fa fa-gavel"></i></div><h2 class="text-4xl font-black text-orange-300 uppercase tracking-tighter">Ceza Sıralaması</h2>
                         <p class="text-gray-400 mt-1">
-                            Timeout, ban, unban ve silinen mesajlara göre kullanıcı ceza geçmişi
+                            Timeout, ban ve unban hareketlerine göre kullanıcı ceza geçmişi
                         </p>
 
                         <div class="flex flex-wrap gap-2 mt-4">
@@ -51,7 +51,7 @@
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-4 gap-3 min-w-[700px]">
+                    <div class="penalty-top-stats">
                         <div class="bg-yellow-500/10 border border-yellow-500/20 px-5 py-4 rounded-2xl">
                             <span class="text-yellow-400 font-bold block text-[11px] uppercase tracking-widest">Timeout Yiyen</span>
                             <span class="text-2xl font-black text-white">{{ timeoutUsers.length }}</span>
@@ -67,10 +67,6 @@
                             <span class="text-2xl font-black text-white">{{ unbanUsers.length }}</span>
                         </div>
 
-                        <div class="bg-pink-500/10 border border-pink-500/20 px-5 py-4 rounded-2xl">
-                            <span class="text-pink-400 font-bold block text-[11px] uppercase tracking-widest">Mesajı Silinen</span>
-                            <span class="text-2xl font-black text-white">{{ deletedUsers.length }}</span>
-                        </div>
                     </div>
                 </div>
 
@@ -222,7 +218,7 @@
             </section>
 
             <section class="px-8 pb-4">
-                <div class="max-w-7xl mx-auto grid grid-cols-2 xl:grid-cols-5 gap-4">
+                <div class="max-w-7xl mx-auto grid grid-cols-2 xl:grid-cols-4 gap-4">
                     <div class="stat-card">
                         <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Toplam Ceza</p>
                         <h3 class="text-3xl font-black text-orange-400">{{ totalPenaltyCount }}</h3>
@@ -290,9 +286,6 @@
                                         </div>
                                         <div class="bg-white/5 p-3 rounded-2xl border border-white/5">
                                             <p class="text-green-400 text-lg">{{ u.mod_received?.unbans || 0 }}</p>Unban
-                                        </div>
-                                        <div class="bg-white/5 p-3 rounded-2xl border border-white/5">
-                                            <p class="text-pink-400 text-lg">{{ u.mod_received?.deleted_messages || 0 }}</p>Silinen
                                         </div>
                                     </div>
                                 </div>
@@ -419,7 +412,7 @@
         </transition>
     </div>
 
-    <script src="/assets/js/common.js"></script>
+    <script src="/assets/js/common.js?v=11.0.0"></script>
     <script>
         const { createApp } = Vue;
 
@@ -518,6 +511,7 @@
 
                 recentPenaltyActions() {
                     let list = Array.isArray(this.moderation?.recent_actions) ? [...this.moderation.recent_actions] : [];
+                    list = list.filter(action => !['delete','deleted','deleted_message'].includes(String(action.action || '').toLowerCase()));
 
                     list = list.filter(action => {
                         const target = String(action.target || '').toLowerCase();
@@ -691,19 +685,20 @@
                 async fetchPenaltyData(showLoader = false) {
                     if (showLoader) this.loading = true;
                     this.error = '';
-
                     try {
                         this.syncFilterState();
-
-                        const result = await loadDashboardData(this.currentFilter);
-                        this.currentFilter = result.filter || this.currentFilter || getFilterState();
-                        this.apiMeta = result.apiData?.meta || {};
-
-                        const rawUsers = result.transformed?.users || [];
-                        this.users = this.filterUsers(rawUsers);
-                        this.moderation = result.transformed?.moderation || { summary: {}, mods: [], recent_actions: [] };
+                        const mode = this.currentFilter?.mode || 'live';
+                        const params = new URLSearchParams({ mode, refresh: showLoader ? '1' : '0' });
+                        if (mode === 'stream' && this.currentFilter.stream_id) params.set('stream_id', this.currentFilter.stream_id);
+                        if (mode === 'day' || mode === 'offstream_day') params.set('date', this.currentFilter.date || '');
+                        if (mode === 'month') params.set('month', this.currentFilter.month || '');
+                        const res = await fetch(`/api/penalties?${params.toString()}`, { headers: { 'Accept': 'application/json' } });
+                        const data = await res.json();
+                        if (!res.ok || !data.ok) throw new Error(data.error || 'penalties_api_failed');
+                        this.apiMeta = data.meta || {};
+                        this.users = Array.isArray(data.users) ? data.users : [];
+                        this.moderation = { summary: data.summary || {}, mods: [], recent_actions: data.recent_actions || [] };
                         this.lastUpdatedAt = new Date().toISOString();
-
                         if (this.selectedUser) {
                             const found = this.users.find(u => u.n === this.selectedUser.n);
                             this.selectedUser = found || null;

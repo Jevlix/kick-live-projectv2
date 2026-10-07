@@ -9,7 +9,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/style.css">
+    <link rel="stylesheet" href="/assets/css/style.css?v=11.0.0">
 </head>
 <body class="bg-[#05070a] text-gray-100 font-['Inter']">
     <div id="app" class="flex h-screen overflow-hidden">
@@ -19,9 +19,9 @@
             <header class="p-8 pb-4 flex flex-col gap-6">
                 <div class="flex justify-between items-end gap-6 flex-wrap">
                     <div>
-                        <h2 class="text-4xl font-black text-red-400 uppercase tracking-tighter">Spam Raporu</h2>
+                        <div class="page-title-icon tone-red"><i class="fa fa-ghost"></i></div><h2 class="text-4xl font-black text-red-300 uppercase tracking-tighter">Spam Raporu</h2>
                         <p class="text-gray-400 mt-1">
-                            Aynı mesajı tekrar tekrar atan kullanıcılar ve spam tekrar kümeleri
+                            Aynı metni tekrar tekrar atan kullanıcılar • Kick emote/emoji tokenları spam hesabına dahil edilmez
                         </p>
 
                         <div class="flex flex-wrap gap-2 mt-4">
@@ -339,7 +339,7 @@
         </transition>
     </div>
 
-    <script src="/assets/js/common.js"></script>
+    <script src="/assets/js/common.js?v=11.0.0"></script>
     <script>
         const { createApp } = Vue;
 
@@ -443,6 +443,14 @@
             },
 
             methods: {
+                normalizeSpamText(value) {
+                    let text = String(value || '');
+                    text = text.replace(/\[emote:\d+:[^\]]+\]/gi, ' ');
+                    text = text.replace(/\bemote\d+[a-zA-Z0-9_:-]*\b/gi, ' ');
+                    text = text.replace(/[\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}\u2600-\u27BF\uFE0F\u200D]/gu, ' ');
+                    return text.replace(/\s+/g, ' ').trim();
+                },
+
                 isKickEmoteWord(word) {
                     return /emote\d+[a-zA-Z]*/i.test(String(word || '').trim());
                 },
@@ -547,34 +555,31 @@
                         const username = ev.username;
                         const message = String(ev.message || '').trim();
                         const timestamp = ev.timestamp || null;
+                        const normalized = this.normalizeSpamText(message);
 
-                        if (!message) continue;
-                        // Emoji/emote-only messages are not spam candidates.
-                        const withoutKickEmotes = message
-                            .replace(/\[emote:\d+:[^\]]+\]/gi, ' ')
-                            .replace(/\bemote\d+[a-zA-Z]*\b/gi, ' ')
-                            .trim();
-                        if (!withoutKickEmotes) continue;
+                        if (!message || !normalized) continue;
 
                         const userKey = String(username).toLowerCase();
                         if (!userLast[userKey]) {
                             userLast[userKey] = {
-                                msg: message,
+                                msg: normalized,
+                                display: message,
                                 count: 1
                             };
                             continue;
                         }
 
-                        if (userLast[userKey].msg === message) {
+                        if (userLast[userKey].msg === normalized) {
                             userLast[userKey].count += 1;
 
                             if (userLast[userKey].count >= 3) {
-                                const key = message.toLowerCase();
+                                const key = normalized.toLowerCase();
 
                                 if (!byMessage[key]) {
                                     byMessage[key] = {
                                         key,
                                         m: message,
+                                        clean_m: normalized,
                                         c: 0,
                                         uniqueUserSet: new Set(),
                                         userMap: {},
@@ -641,7 +646,7 @@
                         const result = await loadDashboardData(this.currentFilter);
                         this.currentFilter = result.filter || this.currentFilter || getFilterState();
                         this.apiMeta = result.apiData?.meta || {};
-                        this.spam = (result.transformed?.spam || []).map(x => ({ key: x.key, m: x.m, c: Number(x.c || 0), unique_users: Number(x.unique_users || 0), last_t: x.last_t || null, top: x.top || [] }));
+                        this.spam = (result.transformed?.spam || []).map(x => ({ key: x.key, m: x.m, clean_m: x.clean_m || x.m, c: Number(x.c || 0), unique_users: Number(x.unique_users || 0), last_t: x.last_t || null, top: x.top || [] })).filter(x => String(x.clean_m || '').trim().length > 0);
                         this.lastUpdatedAt = new Date().toISOString();
 
                         if (this.selectedSpam) {

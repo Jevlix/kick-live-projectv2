@@ -9,7 +9,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/assets/css/style.css">
+    <link rel="stylesheet" href="/assets/css/style.css?v=11.0.0">
 </head>
 <body class="bg-[#05070a] text-gray-100 font-['Inter']">
     <div id="app" class="flex h-screen overflow-hidden">
@@ -19,7 +19,7 @@
             <header class="p-8 pb-4 flex flex-col gap-6">
                 <div class="flex justify-between items-end gap-6 flex-wrap">
                     <div>
-                        <h2 class="text-4xl font-black text-cyan-400 uppercase tracking-tighter">Moderation Paneli</h2>
+                        <div class="page-title-icon tone-cyan"><i class="fa fa-shield-halved"></i></div><h2 class="text-4xl font-black text-cyan-300 uppercase tracking-tighter">Moderation Paneli</h2>
                         <p class="text-gray-400 mt-1">
                             Timeout, ban, unban ve mesaj silme işlemlerinin canlı görünümü
                         </p>
@@ -142,8 +142,6 @@
                                 <option value="timeout">Timeout</option>
                                 <option value="ban">Ban</option>
                                 <option value="unban">Unban</option>
-                                <option value="delete">Delete</option>
-                                <option value="deleted_message">Deleted Message</option>
                             </select>
                         </div>
 
@@ -157,7 +155,6 @@
                                 <option value="timeouts">Timeout</option>
                                 <option value="bans">Ban</option>
                                 <option value="unbans">Unban</option>
-                                <option value="deletes">Silme</option>
                                 <option value="recent">Son İşlem</option>
                                 <option value="name">İsim</option>
                             </select>
@@ -224,10 +221,6 @@
                         <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Unban</p>
                         <h3 class="text-3xl font-black text-green-400">{{ summary.unbans || 0 }}</h3>
                     </div>
-                    <div class="stat-card">
-                        <p class="opacity-50 text-xs font-bold mb-1 uppercase tracking-widest">Mesaj Silme</p>
-                        <h3 class="text-3xl font-black text-pink-400">{{ summary.deleted_messages || 0 }}</h3>
-                    </div>
                 </div>
             </section>
 
@@ -257,7 +250,7 @@
                             >
                                 <div class="flex justify-between items-start gap-4 mb-4">
                                     <div class="min-w-0 flex-1">
-                                        <h5 class="font-black text-2xl italic break-all">{{ mod.n }}</h5>
+                                        <div class="mod-name-line"><div class="mod-avatar-icon"><i class="fa fa-shield"></i></div><h5 class="font-black text-2xl italic break-all">{{ mod.n }}</h5></div>
                                         <div class="text-[10px] uppercase tracking-widest text-gray-500 mt-1">
                                             Son İşlem: {{ formatEventDateTime(mod.last_action_at) }}
                                         </div>
@@ -297,9 +290,7 @@
                                 class="p-4 rounded-[20px] bg-white/5 border border-white/5"
                             >
                                 <div class="flex justify-between items-center gap-3 mb-2">
-                                    <span class="font-black" :class="getActionColor(action.action)">
-                                        {{ (action.action || '-').toUpperCase() }}
-                                    </span>
+                                    <span class="action-badge" :class="getActionColor(action.action)"><i :class="getActionIcon(action.action)"></i> {{ (action.action || '-').toUpperCase() }}</span>
                                     <span class="opacity-30 text-[10px] font-mono">{{ formatEventDateTime(action.t) }}</span>
                                 </div>
 
@@ -388,9 +379,7 @@
                             class="p-6 rounded-[24px] bg-white/5 border-l-4 border-cyan-400 text-sm"
                         >
                             <div class="flex justify-between items-center gap-3 mb-3">
-                                <span class="font-black text-base" :class="getActionColor(log.action)">
-                                    {{ (log.action || '-').toUpperCase() }}
-                                </span>
+                                <span class="action-badge" :class="getActionColor(log.action)"><i :class="getActionIcon(log.action)"></i> {{ (log.action || '-').toUpperCase() }}</span>
                                 <span class="opacity-30 text-[11px] font-mono">{{ formatEventDateTime(log.t) }}</span>
                             </div>
 
@@ -413,7 +402,7 @@
         </transition>
     </div>
 
-    <script src="/assets/js/common.js"></script>
+    <script src="/assets/js/common.js?v=11.0.0"></script>
     <script>
         const { createApp } = Vue;
 
@@ -467,6 +456,7 @@
                     const q = String(this.search || '').toLowerCase().trim();
 
                     let list = this.mods.filter(m => {
+                        if (this.isFilteredUser(m.n)) return false;
                         const modName = String(m.n || '').toLowerCase();
                         if (q && !modName.includes(q)) return false;
 
@@ -487,8 +477,6 @@
                         list.sort((a, b) => (b.bans || 0) - (a.bans || 0));
                     } else if (this.sortBy === 'unbans') {
                         list.sort((a, b) => (b.unbans || 0) - (a.unbans || 0));
-                    } else if (this.sortBy === 'deletes') {
-                        list.sort((a, b) => (b.deleted_messages || 0) - (a.deleted_messages || 0));
                     } else if (this.sortBy === 'recent') {
                         list.sort((a, b) => new Date(b.last_action_at || 0) - new Date(a.last_action_at || 0));
                     } else if (this.sortBy === 'name') {
@@ -499,7 +487,7 @@
                 },
 
                 filteredRecentActions() {
-                    let list = this.recentActions.slice();
+                    let list = this.recentActions.slice().filter(action => !this.isFilteredUser(action.mod));
 
                     if (this.search.trim()) {
                         const q = this.search.toLowerCase();
@@ -619,6 +607,15 @@
                     if (this.excludeBotrix && u.includes('botrix')) return true;
 
                     return false;
+                },
+
+                getActionIcon(action) {
+                    const a = String(action || '').toLowerCase();
+                    if (a === 'timeout') return 'fa-solid fa-clock';
+                    if (a === 'ban') return 'fa-solid fa-ban';
+                    if (a === 'unban') return 'fa-solid fa-unlock';
+                    if (a.includes('delete')) return 'fa-solid fa-trash-can';
+                    return 'fa-solid fa-shield-halved';
                 },
 
                 normalizeAction(action) {

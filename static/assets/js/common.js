@@ -596,6 +596,15 @@ function getEntryCount(item) {
     return item?.c || item?.count || item?.value || 0;
 }
 
+function getActionIcon(action) {
+    const a = String(action || '').toLowerCase();
+    if (a === 'timeout') return 'fa-solid fa-clock';
+    if (a === 'ban') return 'fa-solid fa-ban';
+    if (a === 'unban') return 'fa-solid fa-unlock';
+    if (a.includes('delete')) return 'fa-solid fa-trash-can';
+    return 'fa-solid fa-shield-halved';
+}
+
 function getActionColor(action) {
     switch (String(action || '').toLowerCase()) {
         case 'ban': return 'text-red-400';

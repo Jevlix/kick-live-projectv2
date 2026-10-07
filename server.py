@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import os
+import re
 import time
 from collections import OrderedDict, defaultdict, deque
 from datetime import datetime, timezone
@@ -37,6 +38,8 @@ broadcast_task: asyncio.Task | None = None
 LIVE_CACHE_TTL = int(os.getenv('LIVE_CACHE_TTL', '30'))
 HISTORICAL_CACHE_TTL = int(os.getenv('HISTORICAL_CACHE_TTL', '600'))
 STREAMS_CACHE_TTL = int(os.getenv('STREAMS_CACHE_TTL', '30'))
+PENALTY_CACHE_TTL = int(os.getenv('PENALTY_CACHE_TTL', '10'))
+EMOTES_CACHE_TTL = int(os.getenv('EMOTES_CACHE_TTL', '20'))
 CACHE_MAX_ENTRIES = int(os.getenv('CACHE_MAX_ENTRIES', '32'))
 MAX_WS_CLIENTS = int(os.getenv('MAX_WS_CLIENTS', '10000'))
 BROADCAST_FLUSH_MS = int(os.getenv('BROADCAST_FLUSH_MS', '200'))
@@ -75,6 +78,14 @@ def normalize_mod_name(value):
     if raw.lower() in {'kick/system', 'kick system', 'system'}:
         return 'Kick/System'
     return raw
+
+
+def normalize_spam_text(value):
+    text = str(value or '')
+    text = re.sub(r'\[emote:\d+:[^\]]+\]', ' ', text, flags=re.I)
+    text = re.sub(r'\bemote\d+[A-Za-z0-9_:-]*\b', ' ', text, flags=re.I)
+    text = re.sub(r'[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
 
 
 def build_stream_label(row):
@@ -191,6 +202,8 @@ async def protection_and_headers(request: Request, call_next):
         response.headers['Cache-Control'] = 'private, max-age=5'
     elif path.startswith('/assets/'):
         response.headers['Cache-Control'] = 'public, max-age=3600, immutable'
+    elif path.endswith('.html') or path == '/':
+        response.headers['Cache-Control'] = 'no-cache, max-age=0, must-revalidate'
     return response
 
 
@@ -469,11 +482,15 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
         WHERE stream_id IN ({ph}) GROUP BY message_key ORDER BY c DESC LIMIT 500""", ids).fetchall()
     spam = []
     for r in spam_rows:
+        message_text = str(r['m'] or '')
+        spam_text = normalize_spam_text(message_text)
+        if not spam_text:
+            continue
         try:
             names = json.loads(r['usernames_json'] or '[]')
         except Exception:
             names = []
-        spam.append({'key': r['key'], 'm': r['m'], 'c': r['c'], 'unique_users': r['unique_users'] or 0,
+        spam.append({'key': r['key'], 'm': message_text, 'clean_m': spam_text, 'c': r['c'], 'unique_users': r['unique_users'] or 0,
                      'last_t': r['last_t'], 'top': [{'u': n, 'c': None} for n in names[:10]]})
 
     event_rows = conn.execute(f"""SELECT id,stream_id,timestamp,event_name,event_type,username,target_username,
@@ -490,6 +507,11 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
     recent_mod = [dict(r) for r in reversed(recent_mod_rows)]
     mods_map = {}
     for ev in recent_mod:
+        et = ev.get('event_type')
+        # Deleted messages remain available in recent_actions, but do not create
+        # moderator cards, totals, target counts, or reason counts.
+        if et == 'deleted':
+            continue
         mod_name = normalize_mod_name(ev.get('moderator') or ev.get('mod') or '')
         mod = mods_map.setdefault(mod_name, {
             'n': mod_name, 'total_actions': 0, 'timeouts': 0, 'bans': 0, 'unbans': 0,
@@ -523,6 +545,19 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
         mod['logs'] = mod['logs'][-200:]
 
     mod_list = sorted(mods_map.values(), key=lambda x: x['total_actions'], reverse=True)
+    normalized_recent = []
+    for ev in recent_mod[-300:]:
+        et = str(ev.get('event_type') or '').lower()
+        action = 'deleted_message' if et == 'deleted' else et
+        if et == 'ban' and not ev.get('permanent'):
+            action = 'timeout'
+        normalized_recent.append({
+            **ev,
+            't': ev.get('timestamp'),
+            'mod': normalize_mod_name(ev.get('moderator') or ''),
+            'target': ev.get('target_username') or ev.get('username'),
+            'action': action,
+        })
     moderation_summary = {
         'total_actions': sum(m['total_actions'] for m in mod_list),
         'timeouts': sum(m['timeouts'] for m in mod_list),
@@ -540,7 +575,7 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
         'moderation': {
             'summary': moderation_summary,
             'mods': mod_list,
-            'recent_actions': recent_mod[-300:],
+            'recent_actions': normalized_recent,
         },
         'events': events,
         'game_special': {
@@ -841,7 +876,9 @@ async def api_word_detail(word: str, stream_id: Optional[int] = None, limit: int
 
 
 @app.get('/api/emotes')
-async def api_emotes(stream_id: Optional[int] = None):
+async def api_emotes(stream_id: Optional[int] = None, refresh: int = Query(0, ge=0, le=1)):
+    key = f'emotes:{stream_id or "live"}'
+
     def fetch():
         conn = connect()
         try:
@@ -854,7 +891,7 @@ async def api_emotes(stream_id: Optional[int] = None):
                 f'SELECT emote_id id,MAX(emote_name) n,SUM(count) c FROM emote_stats WHERE stream_id IN ({ph}) GROUP BY emote_id ORDER BY c DESC LIMIT 1200',
                 ids,
             ).fetchall()
-            unique = {str(r['emote_id']): r['unique_users'] for r in conn.execute(
+            unique = {str(r['emote_id']): int(r['unique_users'] or 0) for r in conn.execute(
                 f'SELECT emote_id,COUNT(DISTINCT user_id) unique_users FROM user_emote_stats WHERE stream_id IN ({ph}) GROUP BY emote_id', ids
             ).fetchall()}
             top_rows = conn.execute(f"""
@@ -873,13 +910,121 @@ async def api_emotes(stream_id: Optional[int] = None):
             for r in top_rows:
                 top_map[str(r['emote_id'])].append({'u': r['username'] or 'Bilinmiyor', 'c': int(r['c'] or 0)})
             return {'ok': True, 'emotes': [
-                {'id': str(r['id']), 'n': r['n'], 'c': r['c'], 'unique_users': unique.get(str(r['id']), 0),
+                {'id': str(r['id']), 'n': r['n'], 'c': int(r['c'] or 0), 'unique_users': unique.get(str(r['id']), 0),
                  'top': top_map.get(str(r['id']), [])}
                 for r in rows
             ]}
         finally:
             conn.close()
-    return await asyncio.to_thread(fetch)
+
+    if refresh:
+        return await asyncio.to_thread(fetch)
+    async def factory():
+        return await asyncio.to_thread(fetch)
+    return await cached_value(key, factory, EMOTES_CACHE_TTL)
+
+
+@app.get('/api/penalties')
+async def api_penalties(mode: str = 'live', date: Optional[str] = None, month: Optional[str] = None,
+                        stream_id: Optional[int] = None, refresh: int = Query(0, ge=0, le=1)):
+    # Small indexed endpoint for the penalty leaderboard. It starts from moderation
+    # events so recipients appear even when they sent no chat messages.
+    mode = mode if mode in ('live', 'stream', 'day', 'offstream_day', 'week', 'month', 'all') else 'live'
+    key = f'penalties:{mode}:{date}:{month}:{stream_id}'
+    ttl = PENALTY_CACHE_TTL if mode == 'live' else HISTORICAL_CACHE_TTL
+
+    def build():
+        conn = connect()
+        try:
+            ids, selected = stream_ids_for_mode(conn, mode, date, month, stream_id)
+            if mode == 'live' and not selected:
+                return {'ok': True, 'mode': mode, 'stream': None,
+                        'meta': {'warning': 'Canlı yayın kapalı', 'live_stream_active': False},
+                        'summary': {'total_actions': 0, 'timeouts': 0, 'bans': 0, 'unbans': 0},
+                        'users': [], 'recent_actions': []}
+            if mode == 'stream' and not selected:
+                return {'ok': False, 'error': 'stream_not_found'}
+            if not ids:
+                return {'ok': True, 'mode': mode, 'stream': None, 'meta': {},
+                        'summary': {'total_actions': 0, 'timeouts': 0, 'bans': 0, 'unbans': 0},
+                        'users': [], 'recent_actions': []}
+
+            ph = ','.join('?' * len(ids))
+            penalty_rows = conn.execute(f'''SELECT target_username,
+                SUM(CASE WHEN event_type='timeout' OR (event_type='ban' AND permanent=0) THEN 1 ELSE 0 END) timeouts,
+                SUM(CASE WHEN event_type='ban' AND permanent=1 THEN 1 ELSE 0 END) bans,
+                SUM(CASE WHEN event_type='unban' THEN 1 ELSE 0 END) unbans,
+                MAX(timestamp) last_t, COUNT(*) total
+                FROM events
+                WHERE stream_id IN ({ph})
+                  AND event_type IN ('timeout','ban','unban')
+                  AND COALESCE(target_username,'') <> ''
+                GROUP BY LOWER(target_username)
+                ORDER BY total DESC, last_t DESC''', ids).fetchall()
+
+            users = []
+            for r in penalty_rows:
+                users.append({
+                    'n': r['target_username'] or 'Bilinmiyor',
+                    'mc': 0, 'wc': 0, 'ec': 0,
+                    'mod_received': {
+                        'timeouts': int(r['timeouts'] or 0),
+                        'bans': int(r['bans'] or 0),
+                        'unbans': int(r['unbans'] or 0),
+                        'deleted_messages': 0,
+                    },
+                    'mod_history_received': []
+                })
+
+            history_rows = conn.execute(f'''SELECT timestamp t,event_type,moderator,target_username,reason,duration,permanent
+                FROM events WHERE stream_id IN ({ph}) AND event_type IN ('timeout','ban','unban')
+                ORDER BY id DESC LIMIT 2000''', ids).fetchall()
+            history_map = defaultdict(list)
+            for r in history_rows:
+                name = (r['target_username'] or '').lower()
+                if not name:
+                    continue
+                action = 'timeout' if r['event_type'] == 'timeout' or (r['event_type'] == 'ban' and not r['permanent']) else r['event_type']
+                history_map[name].append({
+                    't': r['t'], 'action': action,
+                    'mod': normalize_mod_name(r['moderator']), 'target': r['target_username'],
+                    'reason': r['reason'], 'duration': r['duration']
+                })
+            for user in users:
+                user['mod_history_received'] = history_map.get(user['n'].lower(), [])[:200]
+
+            action_rows = conn.execute(f'''SELECT id,timestamp t,event_type,moderator,target_username,reason,duration,permanent,message
+                FROM events WHERE stream_id IN ({ph}) AND event_type IN ('timeout','ban','unban')
+                ORDER BY id DESC LIMIT 300''', ids).fetchall()
+            recent = []
+            for r in reversed(action_rows):
+                action = 'timeout' if r['event_type'] == 'timeout' or (r['event_type'] == 'ban' and not r['permanent']) else r['event_type']
+                recent.append({
+                    'key': r['id'], 't': r['t'], 'action': action,
+                    'mod': normalize_mod_name(r['moderator']), 'target': r['target_username'] or 'Bilinmiyor',
+                    'reason': r['reason'], 'duration': r['duration'], 'msg': r['message']
+                })
+
+            summary = {
+                'total_actions': sum(u['mod_received']['timeouts'] + u['mod_received']['bans'] + u['mod_received']['unbans'] for u in users),
+                'timeouts': sum(u['mod_received']['timeouts'] for u in users),
+                'bans': sum(u['mod_received']['bans'] for u in users),
+                'unbans': sum(u['mod_received']['unbans'] for u in users),
+            }
+            stream = row_dict(selected)
+            if stream:
+                stream['display_label'] = build_stream_label(selected)
+            return {'ok': True, 'mode': mode, 'stream': stream,
+                    'meta': {'live_stream_active': bool(selected and selected['status'] == 'live')},
+                    'summary': summary, 'users': users, 'recent_actions': recent}
+        finally:
+            conn.close()
+
+    if refresh:
+        return await asyncio.to_thread(build)
+    async def factory():
+        return await asyncio.to_thread(build)
+    return await cached_value(key, factory, ttl)
 
 
 @app.get('/api/live/stats')

@@ -83,6 +83,22 @@ class KickRecorder:
     def emotes(text: str):
         return [{'id': m.group(1), 'name': m.group(2)} for m in re.finditer(r'\[?emote:(\d+):([^\]\s]+)\]?', text or '', flags=re.I)]
 
+    @staticmethod
+    def spam_normalize(content: str) -> str:
+        """Normalize chat for repeat-spam detection. Kick emotes and emoji-only
+        messages are ignored, while normal text surrounding an emote is retained."""
+        text = str(content or '')
+        # Kick's serialized emote tokens.
+        text = re.sub(r'\[emote:\d+:[^\]]+\]', ' ', text, flags=re.I)
+        text = re.sub(r'\bemote\d+[A-Za-z0-9_:-]*\b', ' ', text, flags=re.I)
+        # Common Unicode emoji / pictograph blocks. Keep normal punctuation and letters.
+        text = re.sub(
+            r'[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]',
+            ' ', text
+        )
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+
     def session(self):
         active = get_active_stream()
         if active:
@@ -149,15 +165,19 @@ class KickRecorder:
                 'emotes': norm_ems, 'words': self.words(content)
             })
             if username and content:
+                spam_text = self.spam_normalize(content)
                 key = str(username).lower()
                 state = self.last_user_message.get(key) or {'msg': None, 'repeat': 0}
-                if state.get('msg') == content:
+                if spam_text and state.get('msg') == spam_text:
                     state['repeat'] = int(state.get('repeat', 1)) + 1
+                elif spam_text:
+                    state = {'msg': spam_text, 'repeat': 1}
                 else:
-                    state = {'msg': content, 'repeat': 1}
+                    # Emote-only messages never participate in spam detection.
+                    state = {'msg': None, 'repeat': 0}
                 self.last_user_message[key] = state
-                if state['repeat'] >= 3:
-                    entry['spam_key'] = content.strip().lower()[:500]
+                if spam_text and state['repeat'] >= 3:
+                    entry['spam_key'] = spam_text.strip().lower()[:500]
                     entry['spam_repeat_count'] = state['repeat']
             return entry
 
