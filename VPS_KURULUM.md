@@ -1,4 +1,4 @@
-# VPS sıfırdan kurulum — v9 Performans / 10K
+# VPS kurulumu ve güncelleme — V12 realtime fix
 
 Bu paket runtime verisi/SQLite DB içermez. VPS'e temiz proje olarak yüklenir.
 
@@ -111,6 +111,12 @@ Canlı DB son mesajını:
 - Dashboard WebSocket yeniden bağlandığında son 50 chat mesajını SQLite'dan hydrate ediyor.
 
 
+## V12 realtime ve servis notları
+
+- `KickLive` servisi FastAPI startup event'i içinde recorder'ı başlatır. Bu nedenle eski, ayrıca kurulu `KickRecorder` NSSM servisi **Stopped** kalmalıdır; eski Desktop klasörüne bağlı bu servisi başlatmak ikinci/eski recorder çalıştırabilir.
+- `KickLive` artık `web.kick.com/api/v1/realtime` üzerinden provider ve WebSocket URL'sini dinamik alır; sabit `KICK_PUSHER_KEY` / `KICK_PUSHER_REGION` kullanılmaz.
+- Veritabanı `data/kick_live.db` içinde kalır; dağıtım ZIP'inde DB ve `.env` bulunmaz.
+
 ## v9 performans notları
 
 - Dashboard ağır verisi cache'lenir; canlı snapshot varsayılan 30 saniye, bitmiş yayın özeti 10 dakika tutulur.
@@ -132,3 +138,8 @@ Cloudflare/WAF tarafında en azından `/api/*` için rate limit, bot koruması v
 
 `/health` çıktısında `queue_size`, `ws_clients`, `cache_entries`, `recorder_running` alanlarını kontrol et.
 
+
+
+## V12 güvenli güncelleme notu
+
+V12'ye geçmeden önce KickLive servisini durdurun ve SQLite Online Backup API ile `data/kick_live.db` dosyasının tutarlı bir yedeğini alın. `.env` ve `data` klasörünü kod paketiyle değiştirmeyin. `KickLive` FastAPI uygulamasının içinde recorder'ı başlattığı için ayrı `KickRecorder` NSSM servisi eski kurulumdan kalan bir servistir ve çalıştırılmamalıdır.

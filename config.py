@@ -30,12 +30,7 @@ RAW_JSON_IN_DB = os.getenv('RAW_JSON_IN_DB', '0').lower() in {'1', 'true', 'yes'
 PRINT_CHAT = os.getenv('PRINT_CHAT', '0').lower() in {'1', 'true', 'yes'}
 LOG_OFFSTREAM_CHAT = os.getenv('LOG_OFFSTREAM_CHAT', '1').lower() in {'1', 'true', 'yes'}
 
-PUSHER_KEY = os.getenv('KICK_PUSHER_KEY', '32cbd69e4b950bf97679')
-PUSHER_REGION = os.getenv('KICK_PUSHER_REGION', 'us2')
-PUSHER_WS_URL = (
-    f'wss://ws-{PUSHER_REGION}.pusher.com/app/{PUSHER_KEY}'
-    '?protocol=7&client=js&version=8.4.0&flash=false'
-)
+# Realtime endpoints and provider credentials are now negotiated dynamically in kick_realtime.py.
 
 API_BASE = 'https://api.kick.com'
 OAUTH_BASE = 'https://id.kick.com'

@@ -4,15 +4,15 @@ import re
 import inspect
 from datetime import datetime, timezone
 
-import websockets
 
 from config import (
     CHANNEL_SLUG, DB_BATCH_SIZE, DB_BATCH_WAIT_MS, LOGS_DIR,
-    MAX_JSONL_MB, PRINT_CHAT, PUSHER_WS_URL, RECONNECT_DELAY_SECONDS,
+    MAX_JSONL_MB, PRINT_CHAT, RECONNECT_DELAY_SECONDS,
     RAW_JSON_IN_DB, LOG_OFFSTREAM_CHAT,
 )
 from db import BatchWriter, connect, get_active_stream, init_db
 from kick_api import KickAPI
+from kick_realtime import KickRealtimeConnection
 from stream_manager import ensure_live_stream, get_channel_meta, get_chatroom_id, monitor_loop
 
 
@@ -415,87 +415,60 @@ class KickRecorder:
             raise RuntimeError('KICK_CHANNEL_SLUG .env içinde ayarlanmalı.')
 
         while self.running:
+            realtime = None
             try:
                 meta = await asyncio.to_thread(get_channel_meta)
                 chatroom_id = (meta or {}).get('chatroom_id') or await asyncio.to_thread(get_chatroom_id)
+                channel_id = (meta or {}).get('broadcaster_user_id')
 
-                if not chatroom_id:
-                    print('[KICK] Chatroom ID bulunamadı. 10 sn sonra tekrar deniyorum.', flush=True)
+                if not chatroom_id or not channel_id:
+                    print('[KICK] Channel/Chatroom ID bulunamadı. 10 sn sonra tekrar deniyorum.', flush=True)
                     await asyncio.sleep(10)
                     continue
 
+                # Kick's current realtime negotiation expects the broadcaster/channel
+                # ID here, not the chatroom ID. The chatroom ID is only used to
+                # subscribe to chatrooms.<id>.v2 after the connection is authenticated.
+                realtime = KickRealtimeConnection(str(channel_id), str(chatroom_id))
+                await realtime.connect()
                 print(
-                    f'[KICK] Pusher bağlanıyor: {CHANNEL_SLUG} chatroom={chatroom_id}',
+                    f'[KICK] Realtime bağlı: provider={realtime.provider} '
+                    f'channel={channel_id} chatroom={chatroom_id}',
                     flush=True,
                 )
 
-                async with websockets.connect(
-                    PUSHER_WS_URL,
-                    ping_interval=25,
-                    ping_timeout=25,
-                    close_timeout=10,
-                    max_size=4 * 1024 * 1024,
-                ) as ws:
-                    await ws.send(json.dumps({
-                        'event': 'pusher:subscribe',
-                        'data': {
-                            'auth': '',
-                            'channel': f'chatrooms.{chatroom_id}.v2',
-                        },
-                    }))
-                    print('[KICK] Chat subscription gönderildi.', flush=True)
+                while self.running:
+                    raw = await realtime.recv_event()
+                    if not raw:
+                        continue
 
-                    async for message in ws:
-                        if not self.running:
-                            break
+                    self.stats['received'] += 1
+                    self.stats['last_received_at'] = datetime.now(timezone.utc).isoformat()
+                    data = self.parse_data(raw)
+                    if data is None:
+                        continue
 
-                        self.stats['received'] += 1
-                        self.stats['last_received_at'] = datetime.now(timezone.utc).isoformat()
+                    name = self.event_name(raw.get('event', ''))
+                    entry = self.normalize_event(data, name)
+                    if entry.get('type') == 'chat':
+                        self.stats['chat'] += 1
+                        self.stats['last_chat_at'] = entry.get('t')
+                        if PRINT_CHAT:
+                            print(f"[CHAT] {entry.get('user')}: {entry.get('msg')}", flush=True)
 
-                        try:
-                            raw = json.loads(message)
-                        except Exception:
-                            continue
-
-                        event = raw.get('event', '')
-                        if event == 'pusher:ping':
-                            await ws.send(json.dumps({'event': 'pusher:pong', 'data': {}}))
-                            continue
-
-                        if event in {
-                            'pusher:pong',
-                            'pusher:connection_established',
-                            'pusher_internal:subscription_succeeded',
-                            'pusher:subscription_succeeded',
-                        }:
-                            continue
-
-                        data = self.parse_data(raw)
-                        if data is None:
-                            continue
-
-                        name = self.event_name(event)
-                        entry = self.normalize_event(data, name)
-
-                        if entry.get('type') == 'chat':
-                            self.stats['chat'] += 1
-                            self.stats['last_chat_at'] = entry.get('t')
-                            if PRINT_CHAT:
-                                print(
-                                    f"[CHAT] {entry.get('user')}: {entry.get('msg')}",
-                                    flush=True,
-                                )
-
-                        await self.enqueue(entry)
+                    await self.enqueue(entry)
 
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 self.stats['errors'] += 1
                 self.stats['last_error'] = f'socket: {e}'
-                print(f'[KICK] bağlantı hatası: {repr(e)}', flush=True)
+                print(f'[KICK] realtime bağlantı hatası: {type(e).__name__}: {e}', flush=True)
                 if self.running:
                     await asyncio.sleep(RECONNECT_DELAY_SECONDS)
+            finally:
+                if realtime is not None:
+                    await realtime.close()
 
     async def _supervise(self, name, factory):
         while self.running:

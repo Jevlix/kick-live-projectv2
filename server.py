@@ -828,9 +828,16 @@ async def api_user_detail(username: str, stream_id: Optional[int] = None, limit:
                 for r in rows:
                     d = dict(r)
                     history.append(d)
-                    if d['event_type'] in ('timeout', 'ban', 'unban'):
-                        mod_received[d['event_type'] if d['event_type'] != 'ban' or d['permanent'] else 'timeouts'] += 1
-                    elif d['event_type'] == 'deleted':
+                    event_type = d.get('event_type')
+                    if event_type == 'timeout':
+                        mod_received['timeouts'] += 1
+                    elif event_type == 'ban':
+                        # Temporary bans are recorded as timeouts; permanent bans
+                        # are counted as bans. Never index this dict with 'timeout'.
+                        mod_received['bans' if d.get('permanent') else 'timeouts'] += 1
+                    elif event_type == 'unban':
+                        mod_received['unbans'] += 1
+                    elif event_type == 'deleted':
                         mod_received['deleted_messages'] += 1
             return {
                 'ok': True, 'user': dict(user) if user else None, 'words': words, 'emotes': emotes,

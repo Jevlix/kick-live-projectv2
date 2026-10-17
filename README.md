@@ -56,6 +56,14 @@ Bu paket veri alımını hızlandırmak için cache, set-based SQL summary, WebS
 Ayrıntılar: `PERFORMANS_VE_10K.md`
 
 
+## V12.0.0
+- Fix: chat collection uses Kick's dynamically negotiated realtime API instead of a stale hard-coded Pusher key.
+- Supports both current Centrifugo and negotiated Pusher providers.
+- Centrifugo flow opens the WebSocket before requesting its client-bound anonymous token, confirms connection/subscription ACKs, responds to heartbeats and renews expiring tokens.
+- Channel connection negotiation uses the broadcaster/channel ID; the chatroom ID is used only for the chatroom subscription.
+- Fix: user detail moderation history counts `timeout` in the `timeouts` field and no longer throws `KeyError`.
+- HTML CSS/JS cache-bust version advanced to 12.0.0.
+
 ## V11.0.0
 - Ceza Sıralaması için ayrı, indeksli `/api/penalties` endpoint'i eklendi; yalnız timeout/ban/unban sayılır.
 - Emoji sıralamasında Top Kullananlar alanı yeniden düzenlendi ve responsive hale getirildi.
