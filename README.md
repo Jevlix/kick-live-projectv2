@@ -54,3 +54,29 @@ Kick Public API canlı kanal/livestream metadata sağlayabilir. `events:subscrib
 Bu paket veri alımını hızlandırmak için cache, set-based SQL summary, WebSocket batching, 30 saniyelik canlı sayaç yenilemesi, batch JSONL loglama, API rate limit ve HTTP compression içerir. Geçmiş yayınlar için kalıcı `stream_summary_cache` kullanılır.
 
 Ayrıntılar: `PERFORMANS_VE_10K.md`
+
+
+## V12.0.0
+- Fix: chat collection uses Kick's dynamically negotiated realtime API instead of a stale hard-coded Pusher key.
+- Supports both current Centrifugo and negotiated Pusher providers.
+- Centrifugo flow opens the WebSocket before requesting its client-bound anonymous token, confirms connection/subscription ACKs, responds to heartbeats and renews expiring tokens.
+- Channel connection negotiation uses the broadcaster/channel ID; the chatroom ID is used only for the chatroom subscription.
+- Fix: user detail moderation history counts `timeout` in the `timeouts` field and no longer throws `KeyError`.
+- HTML CSS/JS cache-bust version advanced to 12.0.0.
+
+## V11.0.0
+- Ceza Sıralaması için ayrı, indeksli `/api/penalties` endpoint'i eklendi; yalnız timeout/ban/unban sayılır.
+- Emoji sıralamasında Top Kullananlar alanı yeniden düzenlendi ve responsive hale getirildi.
+- Spam tespiti Kick emote/emoji tokenlarını tekrar hesabından çıkarır; emote-only mesajlar spam sayılmaz.
+- Moderasyona aksiyon ikonları, normalize isimler ve tarih/saat verileri eklendi.
+- HTML cache bust ve API cache katmanı korunarak tasarım güncellendi; DB şeması değiştirilmedi.
+
+
+## Release 14 — Admin login, access history and chat archive search
+
+- Open the local dashboard and sign in at `/login`.
+- Default local test credentials: `admin` / `arda2004` (configure with `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `.env`).
+- Use **Yönetim → Site Girişleri** to see page views, session IDs, IPs and browser details.
+- Use **Mesaj Arama** to search chat messages recorded in this installation's SQLite archive.
+- Before public deployment, change the default password, use HTTPS, and keep `data/auth_secret.key` private.
+- This archive search covers only messages captured by the local recorder. It does not magically retrieve old messages from KickLogz or Kick's private datasets.

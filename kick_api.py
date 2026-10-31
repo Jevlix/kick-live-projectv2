@@ -107,6 +107,9 @@ class KickAPI:
         livestream = i.get('livestream') or {}
         user = i.get('user') or {}
         category = o.get('category') or livestream.get('category') or {}
+        chatroom = i.get('chatroom') or {}
+        if not isinstance(chatroom, dict):
+            chatroom = {}
 
         channel_id = (
             o.get('broadcaster_user_id') or i.get('id') or user.get('id')
@@ -137,8 +140,15 @@ class KickAPI:
             'category_id': category.get('id'),
             'category_name': category.get('name'),
             'custom_tags': o.get('custom_tags') or livestream.get('custom_tags') or [],
-            'active_subscribers_count': o.get('active_subscribers_count'),
-            'active_gifted_subscribers_count': o.get('active_gifted_subscribers_count'),
+            'active_subscribers_count': o.get('active_subscribers_count') or i.get('active_subscribers_count'),
+            'active_gifted_subscribers_count': o.get('active_gifted_subscribers_count') or i.get('active_gifted_subscribers_count'),
+            'chat_mode': chatroom.get('chat_mode') or chatroom.get('chat_mode_old'),
+            'slow_mode': bool(chatroom.get('slow_mode')),
+            'slow_mode_seconds': chatroom.get('message_interval'),
+            'followers_only': bool(chatroom.get('followers_mode')),
+            'followers_only_minutes': chatroom.get('following_min_duration'),
+            'subscribers_only': bool(chatroom.get('subscribers_mode')),
+            'emote_only': bool(chatroom.get('emotes_mode')),
             'raw_official': o,
             'raw_internal': i,
         }

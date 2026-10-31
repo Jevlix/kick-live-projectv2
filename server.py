@@ -2,14 +2,21 @@ import asyncio
 import copy
 import json
 import os
+import re
 import time
+import sqlite3
+import hmac
+import hashlib
+import base64
+import secrets
 from collections import OrderedDict, defaultdict, deque
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional, Set
 
 from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import BASE_DIR, CHANNEL_SLUG, DB_PATH
@@ -22,6 +29,95 @@ from db import (
 )
 from recorder import KickRecorder
 from stream_manager import get_channel_meta
+
+
+# ---------------------------------------------------------------------------
+# Admin authentication + lightweight privacy-conscious access history
+# ---------------------------------------------------------------------------
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "arda2004")
+AUTH_SECRET = os.getenv("AUTH_SECRET", "").strip()
+if not AUTH_SECRET:
+    # Persistent secret is generated once in data/auth_secret.key. Keep this file
+    # when deploying or all existing sessions will be invalidated.
+    _secret_path = BASE_DIR / "data" / "auth_secret.key"
+    _secret_path.parent.mkdir(parents=True, exist_ok=True)
+    if _secret_path.exists():
+        AUTH_SECRET = _secret_path.read_text(encoding="utf-8").strip()
+    else:
+        AUTH_SECRET = secrets.token_urlsafe(48)
+        _secret_path.write_text(AUTH_SECRET, encoding="utf-8")
+        try:
+            os.chmod(_secret_path, 0o600)
+        except OSError:
+            pass
+
+def _sign_session(visitor_id: str, issued: int) -> str:
+    payload = f"{visitor_id}.{issued}"
+    sig = hmac.new(AUTH_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}.{sig}".encode()).decode().rstrip("=")
+
+def _verify_session(token: str | None) -> str | None:
+    if not token:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
+        visitor_id, issued_s, sig = raw.rsplit(".", 2)
+        issued = int(issued_s)
+        if time.time() - issued > 7 * 24 * 3600 or issued > time.time() + 60:
+            return None
+        payload = f"{visitor_id}.{issued}"
+        expected = hmac.new(AUTH_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        return visitor_id if hmac.compare_digest(sig, expected) else None
+    except Exception:
+        return None
+
+def _ensure_access_table():
+    conn = sqlite3.connect(str(DB_PATH), timeout=20)
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS site_access_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                visitor_id TEXT NOT NULL,
+                username TEXT NOT NULL,
+                ip_address TEXT,
+                user_agent TEXT,
+                page TEXT NOT NULL,
+                visited_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_site_access_visited ON site_access_log(visited_at DESC)")
+        conn.commit()
+    finally:
+        conn.close()
+
+def _record_site_visit(visitor_id: str, page: str, ip: str, ua: str):
+    conn = sqlite3.connect(str(DB_PATH), timeout=20)
+    try:
+        conn.execute(
+            "INSERT INTO site_access_log(visitor_id, username, ip_address, user_agent, page, visited_at) VALUES(?,?,?,?,?,?)",
+            (visitor_id, ADMIN_USERNAME, ip[:64], ua[:300], page[:180], datetime.now(timezone.utc).isoformat())
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+LOGIN_HTML = r"""<!doctype html>
+<html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RRAENEE • Admin Girişi</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark;--green:#53fc18;--bg:#080b09;--panel:#101612;--line:#233127;--muted:#8d9a90}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 0%,#15301b 0,transparent 48%),var(--bg);font-family:Inter,system-ui;color:#f5fff6;padding:24px}
+.card{width:min(420px,100%);padding:34px;border:1px solid #29432e;border-radius:24px;background:linear-gradient(145deg,#121a14,#0c100d);box-shadow:0 28px 100px #0009}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:30px}.mark{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:var(--green);color:#061006;font-weight:1000;font-size:17px;box-shadow:0 0 30px #53fc1833}.eyebrow{font-size:10px;color:var(--green);font-weight:900;letter-spacing:.2em}.brand h1{font-size:18px;margin:3px 0 0;font-weight:900;letter-spacing:-.04em}
+h2{font-size:27px;letter-spacing:-.06em;margin:0 0 8px}.sub{color:var(--muted);font-size:13px;margin:0 0 25px}
+label{display:block;font-size:11px;color:#b8c4ba;font-weight:800;margin:16px 0 8px}input{width:100%;height:48px;padding:0 14px;border:1px solid var(--line);border-radius:12px;background:#080d09;color:#fff;outline:none;font:600 14px Inter}input:focus{border-color:var(--green);box-shadow:0 0 0 3px #53fc181a}
+button{width:100%;height:48px;border:0;border-radius:12px;margin-top:22px;background:var(--green);color:#071007;font:900 13px Inter;cursor:pointer}button:hover{filter:brightness(1.08)}.error{display:none;margin-top:14px;color:#ff7777;font-size:12px;font-weight:700}.foot{margin-top:22px;color:#647168;font-size:10px;text-align:center}
+</style></head><body><main class="card"><div class="brand"><div class="mark">RR</div><div><div class="eyebrow">KICK LIVE ANALYTICS</div><h1>RRAENEE</h1></div></div>
+<h2>Yönetici girişi</h2><p class="sub">Devam etmek için yönetici hesabınızla giriş yapın.</p>
+<form id="login"><label for="username">KULLANICI ADI</label><input id="username" autocomplete="username" value="" required><label for="password">ŞİFRE</label><input id="password" type="password" autocomplete="current-password" required><button id="submit">GİRİŞ YAP <span aria-hidden="true">→</span></button><div id="error" class="error">Kullanıcı adı veya şifre hatalı.</div></form><div class="foot">RRAENEE • PRIVATE DASHBOARD</div></main>
+<script>document.getElementById('login').addEventListener('submit',async e=>{e.preventDefault();const b=document.getElementById('submit'),err=document.getElementById('error');b.disabled=true;b.textContent='Kontrol ediliyor…';err.style.display='none';try{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('username').value,password:document.getElementById('password').value})});if(r.ok){location.href='/admin';return}err.style.display='block'}catch(_){err.textContent='Sunucuya ulaşılamadı.';err.style.display='block'}finally{b.disabled=false;b.textContent='GİRİŞ YAP →'}});</script></body></html>"""
+
 
 app = FastAPI(title='Kick Live Analytics', version='3.0.0')
 app.add_middleware(GZipMiddleware, minimum_size=1200)
@@ -37,6 +133,8 @@ broadcast_task: asyncio.Task | None = None
 LIVE_CACHE_TTL = int(os.getenv('LIVE_CACHE_TTL', '30'))
 HISTORICAL_CACHE_TTL = int(os.getenv('HISTORICAL_CACHE_TTL', '600'))
 STREAMS_CACHE_TTL = int(os.getenv('STREAMS_CACHE_TTL', '30'))
+PENALTY_CACHE_TTL = int(os.getenv('PENALTY_CACHE_TTL', '10'))
+EMOTES_CACHE_TTL = int(os.getenv('EMOTES_CACHE_TTL', '20'))
 CACHE_MAX_ENTRIES = int(os.getenv('CACHE_MAX_ENTRIES', '32'))
 MAX_WS_CLIENTS = int(os.getenv('MAX_WS_CLIENTS', '10000'))
 BROADCAST_FLUSH_MS = int(os.getenv('BROADCAST_FLUSH_MS', '200'))
@@ -66,6 +164,23 @@ def now_iso():
 
 def row_dict(row):
     return dict(row) if row else None
+
+
+def normalize_mod_name(value):
+    raw = str(value or '').strip()
+    if not raw or raw.lower() in {'unknown mod', 'unknown', 'null', 'none'}:
+        return 'Bilinmiyor'
+    if raw.lower() in {'kick/system', 'kick system', 'system'}:
+        return 'Kick/System'
+    return raw
+
+
+def normalize_spam_text(value):
+    text = str(value or '')
+    text = re.sub(r'\[emote:\d+:[^\]]+\]', ' ', text, flags=re.I)
+    text = re.sub(r'\bemote\d+[A-Za-z0-9_:-]*\b', ' ', text, flags=re.I)
+    text = re.sub(r'[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
 
 
 def build_stream_label(row):
@@ -182,6 +297,8 @@ async def protection_and_headers(request: Request, call_next):
         response.headers['Cache-Control'] = 'private, max-age=5'
     elif path.startswith('/assets/'):
         response.headers['Cache-Control'] = 'public, max-age=3600, immutable'
+    elif path.endswith('.html') or path == '/':
+        response.headers['Cache-Control'] = 'no-cache, max-age=0, must-revalidate'
     return response
 
 
@@ -376,7 +493,42 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
         WHERE stream_id IN ({ph}) AND word NOT LIKE 'emote:%' COLLATE NOCASE
         AND word NOT LIKE '[emote:%' COLLATE NOCASE
         GROUP BY word ORDER BY c DESC LIMIT 2500""", ids).fetchall()
-    words = [{'w': r['w'], 'c': r['c'], 'top': []} for r in word_rows]
+
+    # Build unique-user + top-user data once for the word leaderboard.
+    word_unique_rows = conn.execute(f"""SELECT word, COUNT(DISTINCT user_id) unique_users
+        FROM user_word_stats
+        WHERE stream_id IN ({ph}) AND word NOT LIKE 'emote:%' COLLATE NOCASE
+        AND word NOT LIKE '[emote:%' COLLATE NOCASE
+        GROUP BY word""", ids).fetchall()
+    word_unique_map = {str(r['word']).lower(): int(r['unique_users'] or 0) for r in word_unique_rows}
+
+    top_word_users = conn.execute(f"""
+        WITH ranked AS (
+            SELECT uw.word, MAX(u.username) username, SUM(uw.count) c,
+                ROW_NUMBER() OVER (PARTITION BY LOWER(uw.word) ORDER BY SUM(uw.count) DESC) rn
+            FROM user_word_stats uw
+            LEFT JOIN users u ON u.id=uw.user_id
+            WHERE uw.stream_id IN ({ph})
+              AND uw.word NOT LIKE 'emote:%' COLLATE NOCASE
+              AND uw.word NOT LIKE '[emote:%' COLLATE NOCASE
+            GROUP BY LOWER(uw.word), uw.user_id
+        )
+        SELECT word, username, c FROM ranked WHERE rn <= 10
+        ORDER BY LOWER(word), c DESC
+    """, ids).fetchall()
+    word_top_map = defaultdict(list)
+    for r in top_word_users:
+        word_top_map[str(r['word']).lower()].append({
+            'name': r['username'] or 'Bilinmiyor',
+            'count': int(r['c'] or 0)
+        })
+
+    words = [{
+        'w': r['w'],
+        'c': int(r['c'] or 0),
+        'unique_users': word_unique_map.get(str(r['w']).lower(), 0),
+        'top': word_top_map.get(str(r['w']).lower(), [])
+    } for r in word_rows]
 
     emote_rows = conn.execute(f"""SELECT emote_id id, MAX(emote_name) n, SUM(count) c
         FROM emote_stats WHERE stream_id IN ({ph}) GROUP BY emote_id ORDER BY c DESC LIMIT 1200""", ids).fetchall()
@@ -386,19 +538,19 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
 
     top_emote_users = conn.execute(f"""
         WITH ranked AS (
-            SELECT ue.emote_id, MAX(u.username) username, SUM(ue.count) c,
+            SELECT ue.emote_id, MAX(u.username) username, MAX(u.profile_picture) profile_picture, SUM(ue.count) c,
                 ROW_NUMBER() OVER (PARTITION BY ue.emote_id ORDER BY SUM(ue.count) DESC) rn
             FROM user_emote_stats ue
             LEFT JOIN users u ON u.id=ue.user_id
             WHERE ue.stream_id IN ({ph})
             GROUP BY ue.emote_id, ue.user_id
         )
-        SELECT emote_id, username, c FROM ranked WHERE rn <= 5
+        SELECT emote_id, username, profile_picture, c FROM ranked WHERE rn <= 5
         ORDER BY emote_id, c DESC
     """, ids).fetchall()
     top_map: dict[str, list[dict]] = defaultdict(list)
     for r in top_emote_users:
-        top_map[str(r['emote_id'])].append({'u': r['username'] or 'Unknown', 'c': r['c'] or 0})
+        top_map[str(r['emote_id'])].append({'u': r['username'] or 'Unknown', 'avatar': r['profile_picture'] or '', 'c': r['c'] or 0})
 
     # lastUsed is intentionally derived from a bounded recent chat sample rather than
     # running a LIKE query for every emote.
@@ -425,11 +577,15 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
         WHERE stream_id IN ({ph}) GROUP BY message_key ORDER BY c DESC LIMIT 500""", ids).fetchall()
     spam = []
     for r in spam_rows:
+        message_text = str(r['m'] or '')
+        spam_text = normalize_spam_text(message_text)
+        if not spam_text:
+            continue
         try:
             names = json.loads(r['usernames_json'] or '[]')
         except Exception:
             names = []
-        spam.append({'key': r['key'], 'm': r['m'], 'c': r['c'], 'unique_users': r['unique_users'] or 0,
+        spam.append({'key': r['key'], 'm': message_text, 'clean_m': spam_text, 'c': r['c'], 'unique_users': r['unique_users'] or 0,
                      'last_t': r['last_t'], 'top': [{'u': n, 'c': None} for n in names[:10]]})
 
     event_rows = conn.execute(f"""SELECT id,stream_id,timestamp,event_name,event_type,username,target_username,
@@ -446,13 +602,19 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
     recent_mod = [dict(r) for r in reversed(recent_mod_rows)]
     mods_map = {}
     for ev in recent_mod:
-        mod_name = ev.get('moderator') or 'Kick/System'
+        et = ev.get('event_type')
+        # Deleted messages remain available in recent_actions, but do not create
+        # moderator cards, totals, target counts, or reason counts.
+        if et == 'deleted':
+            continue
+        mod_name = normalize_mod_name(ev.get('moderator') or ev.get('mod') or '')
         mod = mods_map.setdefault(mod_name, {
-            'n': mod_name, 'total_actions': 0, 'timeouts': 0, 'bans': 0, 'unbans': 0,
+            'n': mod_name, 'avatar': '', 'total_actions': 0, 'timeouts': 0, 'bans': 0, 'unbans': 0,
             'deleted_messages': 0, 'last_action_at': None, 'top_targets': [], 'top_reasons': [], 'logs': []
         })
         et = ev.get('event_type')
-        mod['total_actions'] += 1
+        if et != 'deleted':
+            mod['total_actions'] += 1
         if et == 'timeout': mod['timeouts'] += 1
         elif et == 'ban':
             if ev.get('permanent'): mod['bans'] += 1
@@ -467,6 +629,15 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
             'permanent': ev.get('permanent'), 'quantity': ev.get('quantity'),
         })
 
+    # Resolve moderator profile pictures from the same Kick user table populated by chat events.
+    mod_names = [m['n'] for m in mods_map.values() if m.get('n')]
+    if mod_names:
+        placeholders = ','.join('?' for _ in mod_names)
+        avatar_rows = conn.execute(f"SELECT username, MAX(profile_picture) profile_picture FROM users WHERE LOWER(username) IN ({placeholders}) GROUP BY LOWER(username)", [n.lower() for n in mod_names]).fetchall()
+        avatar_map = {str(r['username']).lower(): (r['profile_picture'] or '') for r in avatar_rows}
+        for mod in mods_map.values():
+            mod['avatar'] = avatar_map.get(str(mod['n']).lower(), '')
+
     for mod in mods_map.values():
         target_counts = defaultdict(int)
         reason_counts = defaultdict(int)
@@ -478,6 +649,19 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
         mod['logs'] = mod['logs'][-200:]
 
     mod_list = sorted(mods_map.values(), key=lambda x: x['total_actions'], reverse=True)
+    normalized_recent = []
+    for ev in recent_mod[-300:]:
+        et = str(ev.get('event_type') or '').lower()
+        action = 'deleted_message' if et == 'deleted' else et
+        if et == 'ban' and not ev.get('permanent'):
+            action = 'timeout'
+        normalized_recent.append({
+            **ev,
+            't': ev.get('timestamp'),
+            'mod': normalize_mod_name(ev.get('moderator') or ''),
+            'target': ev.get('target_username') or ev.get('username'),
+            'action': action,
+        })
     moderation_summary = {
         'total_actions': sum(m['total_actions'] for m in mod_list),
         'timeouts': sum(m['timeouts'] for m in mod_list),
@@ -495,7 +679,7 @@ def summary_for_stream_ids(conn, ids: list[int], event_limit=300):
         'moderation': {
             'summary': moderation_summary,
             'mods': mod_list,
-            'recent_actions': recent_mod[-300:],
+            'recent_actions': normalized_recent,
         },
         'events': events,
         'game_special': {
@@ -582,6 +766,103 @@ def _build_data_response(mode, date, month, stream_id, *, force_refresh=False):
         conn.close()
 
 
+
+@app.middleware("http")
+async def admin_session_guard(request: Request, call_next):
+    path = request.url.path
+    # The admin panel is intentionally available only through /admin.
+    if path == "/admin-access.html":
+        return PlainTextResponse("Not Found", status_code=404)
+    if path in ("/admin", "/admin/"):
+        visitor_id = _verify_session(request.cookies.get("rr_admin_session"))
+        if not visitor_id:
+            return HTMLResponse(LOGIN_HTML, status_code=200)
+        if request.method == "GET":
+            return FileResponse(str(BASE_DIR / "static" / "admin-access.html"))
+    if path == "/api/admin/access":
+        if not _verify_session(request.cookies.get("rr_admin_session")):
+            return JSONResponse({"ok": False, "error": "authentication_required"}, status_code=401)
+    # Canonical clean URLs: /users.html -> /users. Never expose the admin file.
+    if path.endswith(".html") and path != "/admin-access.html":
+        return RedirectResponse(url=path[:-5] + ("?" + request.url.query if request.url.query else ""), status_code=308)
+    # Resolve extensionless static page paths to their matching HTML files.
+    if path not in ("/", "/api", "/health") and not path.startswith(("/api/", "/ws")) and not Path(path).suffix:
+        candidate = BASE_DIR / "static" / (path.lstrip("/") + ".html")
+        if candidate.is_file():
+            request.scope["path"] = path + ".html"
+    # Record public dashboard page views anonymously; admin pages are excluded.
+    if request.method == "GET" and (path == "/" or path.endswith(".html") or (BASE_DIR / "static" / (path.lstrip("/") + ".html")).is_file()):
+        try:
+            visitor_id = _verify_session(request.cookies.get("rr_admin_session")) or "public-" + secrets.token_urlsafe(8)
+            forwarded = request.headers.get("x-forwarded-for", "")
+            ip = (forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown"))
+            _record_site_visit(visitor_id, "public:" + path, ip, request.headers.get("user-agent", ""))
+        except Exception as exc:
+            print(f"[ACCESS] log failed: {exc}", flush=True)
+    return await call_next(request)
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page():
+    return RedirectResponse(url="/admin", status_code=303)
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_entry():
+    return HTMLResponse(LOGIN_HTML)
+
+LOGIN_FAILURES: dict[str, list[float]] = {}
+
+@app.post("/api/auth/login")
+async def admin_login(request: Request):
+    client_ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "unknown"))
+    attempts = [t for t in LOGIN_FAILURES.get(client_ip, []) if time.time() - t < 300]
+    if len(attempts) >= 10:
+        return JSONResponse({"ok": False, "error": "too_many_attempts"}, status_code=429)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    username = str(payload.get("username", ""))
+    password = str(payload.get("password", ""))
+    valid = hmac.compare_digest(username, ADMIN_USERNAME) and hmac.compare_digest(password, ADMIN_PASSWORD)
+    if not valid:
+        attempts.append(time.time())
+        LOGIN_FAILURES[client_ip] = attempts
+        return JSONResponse({"ok": False}, status_code=401)
+    LOGIN_FAILURES.pop(client_ip, None)
+    visitor_id = secrets.token_urlsafe(18)
+    token = _sign_session(visitor_id, int(time.time()))
+    response = JSONResponse({"ok": True})
+    response.set_cookie(
+        "rr_admin_session", token, max_age=7 * 24 * 3600, httponly=True,
+        secure=(request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").lower() == "https"), samesite="strict", path="/"
+    )
+    return response
+
+@app.post("/api/auth/logout")
+async def admin_logout():
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("rr_admin_session", path="/")
+    return response
+
+@app.get("/api/admin/access")
+async def admin_access_history(limit: int = Query(200, ge=1, le=1000)):
+    conn = sqlite3.connect(str(DB_PATH), timeout=20)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute("""
+            SELECT id, visitor_id, username, ip_address, user_agent, page, visited_at
+            FROM site_access_log ORDER BY id DESC LIMIT ?
+        """, (limit,)).fetchall()
+        summary = conn.execute("""
+            SELECT COUNT(*) AS visits, COUNT(DISTINCT visitor_id) AS sessions,
+                   COUNT(DISTINCT ip_address) AS ips,
+                   MAX(visited_at) AS last_visit
+            FROM site_access_log
+        """).fetchone()
+        return {"ok": True, "summary": dict(summary), "visits": [dict(r) for r in rows]}
+    finally:
+        conn.close()
+
 @app.get('/health')
 async def health():
     active = await asyncio.to_thread(get_active_stream)
@@ -620,10 +901,11 @@ async def api_status():
             db_stats = dict(row) if row else None
     finally:
         conn.close()
+    channel = meta or {'slug': CHANNEL_SLUG}
     return {
         'ok': True,
-        'channel': meta or {'slug': CHANNEL_SLUG},
-        'live': bool(meta and meta.get('is_live')),
+        'channel': channel,
+        'live': bool(channel.get('is_live')),
         'active_stream': row_dict(active),
         'recorder_stats': recorder.stats if recorder else {},
         'recorder_task_done': bool(recorder_task and recorder_task.done()),
@@ -678,6 +960,51 @@ async def api_stream_events(stream_id: int, limit: int = Query(250, ge=1, le=100
             conn.close()
     return await asyncio.to_thread(fetch)
 
+
+
+@app.get("/api/search/messages")
+async def search_archived_messages(
+    username: str = Query("", min_length=1, max_length=80),
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    stream_id: Optional[int] = None,
+    limit: int = Query(100, ge=1, le=250),
+):
+    """Search only messages already archived by this installation."""
+    user = username.strip()
+    if not user:
+        return {"ok": True, "results": [], "note": "Kullanıcı adı girin."}
+    def fetch():
+        conn = connect()
+        try:
+            clauses, params = [], []
+            if user:
+                clauses.append("LOWER(COALESCE(m.username,'')) = LOWER(?)")
+                params.append(user)
+            if stream_id:
+                clauses.append("m.stream_id = ?")
+                params.append(stream_id)
+            if start:
+                clauses.append("m.timestamp >= ?")
+                params.append(start)
+            if end:
+                clauses.append("m.timestamp <= ?")
+                params.append(end)
+            sql = """
+                SELECT m.id, m.stream_id, m.username, m.timestamp, m.message,
+                       s.label_date, s.title
+                FROM chat_messages m
+                LEFT JOIN streams s ON s.id=m.stream_id
+                WHERE """ + " AND ".join(clauses) + """
+                ORDER BY m.timestamp DESC, m.id DESC LIMIT ?
+            """
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+            return {"ok": True, "results": [dict(r) for r in rows], "count": len(rows),
+                    "scope": "Bu sunucunun kaydettiği sohbet arşivi"}
+        finally:
+            conn.close()
+    return await asyncio.to_thread(fetch)
 
 @app.get('/api/user_messages')
 async def api_user_messages(username: str, stream_id: Optional[int] = None, limit: int = Query(100, ge=1, le=500), before_id: Optional[int] = None):
@@ -747,9 +1074,16 @@ async def api_user_detail(username: str, stream_id: Optional[int] = None, limit:
                 for r in rows:
                     d = dict(r)
                     history.append(d)
-                    if d['event_type'] in ('timeout', 'ban', 'unban'):
-                        mod_received[d['event_type'] if d['event_type'] != 'ban' or d['permanent'] else 'timeouts'] += 1
-                    elif d['event_type'] == 'deleted':
+                    event_type = d.get('event_type')
+                    if event_type == 'timeout':
+                        mod_received['timeouts'] += 1
+                    elif event_type == 'ban':
+                        # Temporary bans are recorded as timeouts; permanent bans
+                        # are counted as bans. Never index this dict with 'timeout'.
+                        mod_received['bans' if d.get('permanent') else 'timeouts'] += 1
+                    elif event_type == 'unban':
+                        mod_received['unbans'] += 1
+                    elif event_type == 'deleted':
                         mod_received['deleted_messages'] += 1
             return {
                 'ok': True, 'user': dict(user) if user else None, 'words': words, 'emotes': emotes,
@@ -795,7 +1129,9 @@ async def api_word_detail(word: str, stream_id: Optional[int] = None, limit: int
 
 
 @app.get('/api/emotes')
-async def api_emotes(stream_id: Optional[int] = None):
+async def api_emotes(stream_id: Optional[int] = None, refresh: int = Query(0, ge=0, le=1)):
+    key = f'emotes:{stream_id or "live"}'
+
     def fetch():
         conn = connect()
         try:
@@ -808,16 +1144,147 @@ async def api_emotes(stream_id: Optional[int] = None):
                 f'SELECT emote_id id,MAX(emote_name) n,SUM(count) c FROM emote_stats WHERE stream_id IN ({ph}) GROUP BY emote_id ORDER BY c DESC LIMIT 1200',
                 ids,
             ).fetchall()
-            unique = {str(r['emote_id']): r['unique_users'] for r in conn.execute(
+            unique = {str(r['emote_id']): int(r['unique_users'] or 0) for r in conn.execute(
                 f'SELECT emote_id,COUNT(DISTINCT user_id) unique_users FROM user_emote_stats WHERE stream_id IN ({ph}) GROUP BY emote_id', ids
             ).fetchall()}
+            top_rows = conn.execute(f"""
+                WITH ranked AS (
+                    SELECT ue.emote_id, MAX(u.username) username, MAX(u.profile_picture) profile_picture, SUM(ue.count) c,
+                        ROW_NUMBER() OVER (PARTITION BY ue.emote_id ORDER BY SUM(ue.count) DESC) rn
+                    FROM user_emote_stats ue
+                    LEFT JOIN users u ON u.id=ue.user_id
+                    WHERE ue.stream_id IN ({ph})
+                    GROUP BY ue.emote_id, ue.user_id
+                )
+                SELECT emote_id, username, profile_picture, c FROM ranked WHERE rn <= 5
+                ORDER BY emote_id, c DESC
+            """, ids).fetchall()
+            top_map = defaultdict(list)
+            for r in top_rows:
+                top_map[str(r['emote_id'])].append({'u': r['username'] or 'Bilinmiyor', 'avatar': r['profile_picture'] or '', 'c': int(r['c'] or 0)})
+            last_used = {}
+            recent = conn.execute(f"SELECT timestamp,message FROM chat_messages WHERE stream_id IN ({ph}) AND message LIKE '%[emote:%' ORDER BY id DESC", ids).fetchall()
+            for chat in recent:
+                for piece in (chat['message'] or '').split('[emote:')[1:]:
+                    eid = piece.split(':', 1)[0]
+                    if eid and eid not in last_used:
+                        last_used[eid] = chat['timestamp']
             return {'ok': True, 'emotes': [
-                {'id': str(r['id']), 'n': r['n'], 'c': r['c'], 'unique_users': unique.get(str(r['id']), 0), 'top': []}
+                {'id': str(r['id']), 'n': r['n'], 'c': int(r['c'] or 0), 'unique_users': unique.get(str(r['id']), 0),
+                 'lastUsed': last_used.get(str(r['id'])), 'top': top_map.get(str(r['id']), [])}
                 for r in rows
             ]}
         finally:
             conn.close()
-    return await asyncio.to_thread(fetch)
+
+    if refresh:
+        return await asyncio.to_thread(fetch)
+    async def factory():
+        return await asyncio.to_thread(fetch)
+    return await cached_value(key, factory, EMOTES_CACHE_TTL)
+
+
+@app.get('/api/penalties')
+async def api_penalties(mode: str = 'live', date: Optional[str] = None, month: Optional[str] = None,
+                        stream_id: Optional[int] = None, refresh: int = Query(0, ge=0, le=1)):
+    # Small indexed endpoint for the penalty leaderboard. It starts from moderation
+    # events so recipients appear even when they sent no chat messages.
+    mode = mode if mode in ('live', 'stream', 'day', 'offstream_day', 'week', 'month', 'all') else 'live'
+    key = f'penalties:{mode}:{date}:{month}:{stream_id}'
+    ttl = PENALTY_CACHE_TTL if mode == 'live' else HISTORICAL_CACHE_TTL
+
+    def build():
+        conn = connect()
+        try:
+            ids, selected = stream_ids_for_mode(conn, mode, date, month, stream_id)
+            if mode == 'live' and not selected:
+                return {'ok': True, 'mode': mode, 'stream': None,
+                        'meta': {'warning': 'Canlı yayın kapalı', 'live_stream_active': False},
+                        'summary': {'total_actions': 0, 'timeouts': 0, 'bans': 0, 'unbans': 0},
+                        'users': [], 'recent_actions': []}
+            if mode == 'stream' and not selected:
+                return {'ok': False, 'error': 'stream_not_found'}
+            if not ids:
+                return {'ok': True, 'mode': mode, 'stream': None, 'meta': {},
+                        'summary': {'total_actions': 0, 'timeouts': 0, 'bans': 0, 'unbans': 0},
+                        'users': [], 'recent_actions': []}
+
+            ph = ','.join('?' * len(ids))
+            penalty_rows = conn.execute(f'''SELECT target_username,
+                SUM(CASE WHEN event_type='timeout' OR (event_type='ban' AND permanent=0) THEN 1 ELSE 0 END) timeouts,
+                SUM(CASE WHEN event_type='ban' AND permanent=1 THEN 1 ELSE 0 END) bans,
+                SUM(CASE WHEN event_type='unban' THEN 1 ELSE 0 END) unbans,
+                MAX(timestamp) last_t, COUNT(*) total
+                FROM events
+                WHERE stream_id IN ({ph})
+                  AND event_type IN ('timeout','ban','unban')
+                  AND COALESCE(target_username,'') <> ''
+                GROUP BY LOWER(target_username)
+                ORDER BY total DESC, last_t DESC''', ids).fetchall()
+
+            users = []
+            for r in penalty_rows:
+                users.append({
+                    'n': r['target_username'] or 'Bilinmiyor',
+                    'mc': 0, 'wc': 0, 'ec': 0,
+                    'mod_received': {
+                        'timeouts': int(r['timeouts'] or 0),
+                        'bans': int(r['bans'] or 0),
+                        'unbans': int(r['unbans'] or 0),
+                        'deleted_messages': 0,
+                    },
+                    'mod_history_received': []
+                })
+
+            history_rows = conn.execute(f'''SELECT timestamp t,event_type,moderator,target_username,reason,duration,permanent
+                FROM events WHERE stream_id IN ({ph}) AND event_type IN ('timeout','ban','unban')
+                ORDER BY id DESC LIMIT 2000''', ids).fetchall()
+            history_map = defaultdict(list)
+            for r in history_rows:
+                name = (r['target_username'] or '').lower()
+                if not name:
+                    continue
+                action = 'timeout' if r['event_type'] == 'timeout' or (r['event_type'] == 'ban' and not r['permanent']) else r['event_type']
+                history_map[name].append({
+                    't': r['t'], 'action': action,
+                    'mod': normalize_mod_name(r['moderator']), 'target': r['target_username'],
+                    'reason': r['reason'], 'duration': r['duration']
+                })
+            for user in users:
+                user['mod_history_received'] = history_map.get(user['n'].lower(), [])[:200]
+
+            action_rows = conn.execute(f'''SELECT id,timestamp t,event_type,moderator,target_username,reason,duration,permanent,message
+                FROM events WHERE stream_id IN ({ph}) AND event_type IN ('timeout','ban','unban')
+                ORDER BY id DESC LIMIT 300''', ids).fetchall()
+            recent = []
+            for r in reversed(action_rows):
+                action = 'timeout' if r['event_type'] == 'timeout' or (r['event_type'] == 'ban' and not r['permanent']) else r['event_type']
+                recent.append({
+                    'key': r['id'], 't': r['t'], 'action': action,
+                    'mod': normalize_mod_name(r['moderator']), 'target': r['target_username'] or 'Bilinmiyor',
+                    'reason': r['reason'], 'duration': r['duration'], 'msg': r['message']
+                })
+
+            summary = {
+                'total_actions': sum(u['mod_received']['timeouts'] + u['mod_received']['bans'] + u['mod_received']['unbans'] for u in users),
+                'timeouts': sum(u['mod_received']['timeouts'] for u in users),
+                'bans': sum(u['mod_received']['bans'] for u in users),
+                'unbans': sum(u['mod_received']['unbans'] for u in users),
+            }
+            stream = row_dict(selected)
+            if stream:
+                stream['display_label'] = build_stream_label(selected)
+            return {'ok': True, 'mode': mode, 'stream': stream,
+                    'meta': {'live_stream_active': bool(selected and selected['status'] == 'live')},
+                    'summary': summary, 'users': users, 'recent_actions': recent}
+        finally:
+            conn.close()
+
+    if refresh:
+        return await asyncio.to_thread(build)
+    async def factory():
+        return await asyncio.to_thread(build)
+    return await cached_value(key, factory, ttl)
 
 
 @app.get('/api/live/stats')
@@ -862,6 +1329,8 @@ async def api_data(mode: str = 'live', date: Optional[str] = None, month: Option
 
 @app.websocket('/ws')
 async def websocket_endpoint(websocket: WebSocket):
+    # Public dashboard chat is intentionally readable without an admin session.
+    # Only the private /admin page and /api/admin/* endpoints require authentication.
     if len(connected_clients) >= MAX_WS_CLIENTS:
         await websocket.close(code=1013, reason='Sunucu kapasitesi dolu')
         return
@@ -914,6 +1383,7 @@ async def websocket_endpoint(websocket: WebSocket):
 async def startup_event():
     global recorder, recorder_task, broadcast_task
     init_db()
+    _ensure_access_table()
     stop_event = asyncio.Event()
     app.state.stop_event = stop_event
     recorder = KickRecorder()

@@ -39,13 +39,26 @@ function parseMessage(msg) {
 }
 
 const RR_FILTER_KEY = 'rr_shared_filter_state_v1';
-const RR_TIME_ZONE = 'Europe/Nicosia';
+const RR_TIME_ZONE = 'Europe/Istanbul';
+
+function parseRRDate(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    let raw = String(value).trim();
+    // Backend timestamps are stored in UTC. SQLite/Kick sometimes returns ISO-like
+    // values without an offset; interpret those as UTC rather than browser-local time.
+    if (/^\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?$/.test(raw)) {
+        raw = raw.replace(' ', 'T') + 'Z';
+    }
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
 
 function formatDateTime(value, options = {}) {
     if (!value) return '-';
     try {
-        const date = value instanceof Date ? value : new Date(value);
-        if (Number.isNaN(date.getTime())) return String(value);
+        const date = parseRRDate(value);
+        if (!date) return String(value);
         return new Intl.DateTimeFormat('tr-TR', {
             timeZone: RR_TIME_ZONE,
             day: '2-digit',
@@ -263,7 +276,8 @@ function buildModerationFromEvents(events) {
 
     for (const ev of events || []) {
         const type = ev.event_type;
-        const modName = ev.moderator || 'Unknown Mod';
+        const rawModName = ev.moderator || ev.mod || '';
+        const modName = ['unknown mod','unknown','null','none'].includes(String(rawModName).trim().toLowerCase()) ? 'Bilinmiyor' : (String(rawModName).trim().toLowerCase() === 'kick/system' ? 'Kick/System' : (rawModName || 'Bilinmiyor'));
 
         if (!['deleted', 'ban', 'unban'].includes(type)) continue;
 
@@ -319,7 +333,7 @@ function buildModerationFromEvents(events) {
     return {
         summary,
         mods,
-        recent_actions: recentActions.slice(-100)
+        recent_actions: recentActions.sort((a, b) => (parseRRDate(b.t)?.getTime() || 0) - (parseRRDate(a.t)?.getTime() || 0)).slice(0, 100)
     };
 }
 
@@ -474,8 +488,9 @@ function transformApiData(apiData) {
         users,
         words: (apiWords || []).map(w => ({
             w: w.word || w.w,
-            c: w.count ?? w.c,
-            top: w.top || []
+            c: Number(w.count ?? w.c ?? 0),
+            unique_users: Number(w.unique_users ?? 0),
+            top: Array.isArray(w.top) ? w.top : []
         })),
         emotes,
         spam,
@@ -529,6 +544,10 @@ function sidebarHtml(activePage) {
         </a>`;
     };
     return `
+        <button type="button" class="mobile-menu-toggle" aria-label="Menüyü aç" onclick="toggleMobileSidebar()">
+            <i class="fa fa-bars"></i>
+        </button>
+        <div class="mobile-sidebar-backdrop" onclick="closeMobileSidebar()"></div>
         <aside class="app-sidebar glass flex flex-col z-20">
             <div class="sidebar-brand">
                 <div class="brand-mark">RR</div>
@@ -545,20 +564,23 @@ function sidebarHtml(activePage) {
 
             <nav class="sidebar-nav">
                 <div class="sidebar-section-label">ANALİZ</div>
-                ${link('/index.html','fa fa-chart-pie','Chat Özeti','index')}
-                ${link('/users.html','fa fa-users','Chat Sıralaması','users')}
-                ${link('/words.html','fa fa-font','Kelime Sıralaması','words')}
-                ${link('/emojis.html','fa fa-face-smile','Emoji Sıralaması','emojis','yellow')}
-                ${link('/spam.html','fa fa-ghost','Spam Raporu','spam','red')}
-                ${link('/moderation.html','fa fa-shield-halved','Moderasyon','moderation','cyan')}
-                ${link('/cezalar.html','fa fa-gavel','Ceza Sıralaması','cezalar','orange')}
+                ${link('/index','fa fa-chart-pie','Chat Özeti','index')}
+                ${link('/search','fa-solid fa-magnifying-glass','Mesaj Arama','search','green')}
+                ${link('/users','fa fa-users','Chat Sıralaması','users')}
+                ${link('/words','fa fa-font','Kelime Sıralaması','words')}
+                ${link('/emojis','fa fa-face-smile','Emoji Sıralaması','emojis','yellow')}
+                ${link('/spam','fa fa-ghost','Spam Raporu','spam','red')}
+                ${link('/moderation','fa-solid fa-user-shield','Moderasyon','moderation','cyan')}
+                ${link('/cezalar','fa fa-gavel','Ceza Sıralaması','cezalar','orange')}
 
                 <div class="sidebar-section-label mt-4">OYUN</div>
-                ${link('/arena.html','fa fa-trophy','Gagara Arena','arena')}
+                ${link('/arena','fa fa-trophy','Gagara Arena','arena','violet')}
+                <div class="sidebar-section-label mt-4">YÖNETİM</div>
+                
             </nav>
 
             <div class="sidebar-clock-card">
-                <div class="text-[9px] font-black tracking-[0.18em] uppercase text-white/35">KIBRIS SAATİ</div>
+                <div class="text-[9px] font-black tracking-[0.18em] uppercase text-white/35">TÜRKİYE SAATİ</div>
                 <div id="rr-site-clock" class="sidebar-clock">--:--:--</div>
                 <div id="rr-site-date" class="sidebar-date">--</div>
             </div>
@@ -590,6 +612,15 @@ function getEntryCount(item) {
     return item?.c || item?.count || item?.value || 0;
 }
 
+function getActionIcon(action) {
+    const a = String(action || '').toLowerCase();
+    if (a === 'timeout') return 'fa-solid fa-clock';
+    if (a === 'ban') return 'fa-solid fa-ban';
+    if (a === 'unban') return 'fa-solid fa-unlock';
+    if (a.includes('delete')) return 'fa-solid fa-trash-can';
+    return 'fa-solid fa-shield-halved';
+}
+
 function getActionColor(action) {
     switch (String(action || '').toLowerCase()) {
         case 'ban': return 'text-red-400';
@@ -617,5 +648,16 @@ function formatChatTime(value) {
 function formatEventDateTime(value) {
     return formatDateTime(value);
 }
+
+function toggleMobileSidebar() {
+    document.body.classList.toggle('sidebar-open');
+}
+function closeMobileSidebar() {
+    document.body.classList.remove('sidebar-open');
+}
+document.addEventListener('click', (event) => {
+    const a = event.target.closest('.sidebar-link');
+    if (a) closeMobileSidebar();
+});
 
 startSiteClock();

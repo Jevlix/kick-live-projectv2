@@ -1,6 +1,7 @@
 .venv/
 venv/
 __pycache__/
+.pytest_cache/
 *.pyc
 .env
 data/*.db
@@ -8,3 +9,5 @@ data/*.db-*
 data/logs/
 data/summaries/
 *.log
+
+data/
